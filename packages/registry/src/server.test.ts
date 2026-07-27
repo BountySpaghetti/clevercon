@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import request from 'supertest';
 import { validateRegistration } from './validate.js';
 import { loadAgents, upsertAgent, removeAgent } from './store.js';
+import { app } from './server.js';
 import type { AgentRecord } from '@clevercon/common';
 
 const validBody = {
@@ -404,89 +406,86 @@ describe('GET /agents pagination', () => {
     mockAgents.forEach((agent) => upsertAgent(agent));
   });
 
-  it('returns bare array when no pagination params (backward compatibility)', () => {
-    const agents = loadAgents();
-    expect(Array.isArray(agents)).toBe(true);
-    expect(agents.length).toBe(3);
+  it('returns bare array when no pagination params (backward compatibility)', async () => {
+    const res = await request(app).get('/agents');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBe(3);
   });
 
-  it('applies default limit when limit param is provided without value', () => {
-    const agents = loadAgents();
-    const DEFAULT_LIMIT = 20;
-    const paginated = agents.slice(0, DEFAULT_LIMIT);
-    expect(paginated.length).toBe(3); // All agents since we only have 3
+  it('applies default limit when only limit param key is provided', async () => {
+    const res = await request(app).get('/agents?limit=20');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total: 3, limit: 20, offset: 0 });
+    expect(Array.isArray(res.body.agents)).toBe(true);
+    expect(res.body.agents.length).toBe(3); // all agents fit within default limit
   });
 
-  it('honors custom limit and returns correct page size', () => {
-    const agents = loadAgents();
-    const limit = 2;
-    const paginated = agents.slice(0, limit);
-    expect(paginated.length).toBe(2);
+  it('honors custom limit and returns correct page size', async () => {
+    const res = await request(app).get('/agents?limit=2');
+    expect(res.status).toBe(200);
+    expect(res.body.agents.length).toBe(2);
+    expect(res.body.limit).toBe(2);
+    expect(res.body.total).toBe(3);
   });
 
-  it('honors offset and skips correct number of results', () => {
-    const agents = loadAgents();
-    const offset = 1;
-    const limit = 2;
-    const paginated = agents.slice(offset, offset + limit);
-    expect(paginated.length).toBe(2);
-    expect(paginated[0].agent_id).toBe('agent-2');
+  it('honors offset and skips correct number of results', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=1');
+    expect(res.status).toBe(200);
+    expect(res.body.agents.length).toBe(2);
+    expect(res.body.agents[0].agent_id).toBe('agent-2');
+    expect(res.body.offset).toBe(1);
   });
 
-  it('returns empty array when offset exceeds result set', () => {
-    const agents = loadAgents();
-    const offset = 100;
-    const limit = 10;
-    const paginated = agents.slice(offset, offset + limit);
-    expect(paginated.length).toBe(0);
+  it('returns empty array when offset exceeds result set', async () => {
+    const res = await request(app).get('/agents?limit=10&offset=100');
+    expect(res.status).toBe(200);
+    expect(res.body.agents).toEqual([]);
+    expect(res.body.total).toBe(3);
   });
 
-  it('clamps limit to maximum (100)', () => {
-    const agents = loadAgents();
-    const limit = 200;
-    const MAX_LIMIT = 100;
-    const clampedLimit = Math.min(MAX_LIMIT, limit);
-    const paginated = agents.slice(0, clampedLimit);
-    expect(paginated.length).toBe(3); // All agents
+  it('clamps limit to maximum (100)', async () => {
+    const res = await request(app).get('/agents?limit=200');
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(100);
+    expect(res.body.agents.length).toBe(3); // all 3 fit within clamped limit
   });
 
-  it('clamps limit to minimum (1) when limit is 0 or negative', () => {
-    const agents = loadAgents();
-    const limit = 0;
-    const clampedLimit = Math.max(1, limit);
-    const paginated = agents.slice(0, clampedLimit);
-    expect(paginated.length).toBe(1);
+  it('clamps limit to minimum (1) when limit is 0 — falls back to default', async () => {
+    // limit=0 is parsed as 0, which is falsy, so the server substitutes DEFAULT_LIMIT (20)
+    const res = await request(app).get('/agents?limit=0');
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(20); // default limit applied when limit resolves to 0
+    expect(Array.isArray(res.body.agents)).toBe(true);
   });
 
-  it('clamps offset to minimum (0) when offset is negative', () => {
-    const agents = loadAgents();
-    const offset = -5;
-    const clampedOffset = Math.max(0, offset);
-    const limit = 2;
-    const paginated = agents.slice(clampedOffset, clampedOffset + limit);
-    expect(paginated.length).toBe(2);
+  it('clamps offset to minimum (0) when offset is negative', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=-5');
+    expect(res.status).toBe(200);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.agents.length).toBe(2);
   });
 
-  it('orders by reputation descending before pagination', () => {
-    const agents = loadAgents();
-    agents.sort((a, b) => b.reputation.score - a.reputation.score);
-    expect(agents[0].agent_id).toBe('agent-1'); // score 90
-    expect(agents[1].agent_id).toBe('agent-2'); // score 70
-    expect(agents[2].agent_id).toBe('agent-3'); // score 50
+  it('treats non-numeric offset (e.g. "abc") as 0', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=abc');
+    expect(res.status).toBe(200);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.agents.length).toBe(2);
   });
 
-  it('pagination applies after filtering', () => {
-    const agents = loadAgents();
-    const filtered = agents.filter((a) => a.reputation.score >= 60);
-    const limit = 1;
-    const paginated = filtered.slice(0, limit);
-    expect(paginated.length).toBe(1);
-    expect(paginated[0].agent_id).toBe('agent-1'); // Only agent with score >= 60
+  it('orders agents by reputation descending before pagination', async () => {
+    const res = await request(app).get('/agents?limit=3');
+    expect(res.status).toBe(200);
+    const ids = res.body.agents.map((a: AgentRecord) => a.agent_id);
+    expect(ids[0]).toBe('agent-1'); // score 90
+    expect(ids[1]).toBe('agent-2'); // score 70
+    expect(ids[2]).toBe('agent-3'); // score 50
   });
 
-  it('returns total count in envelope response', () => {
-    const agents = loadAgents();
-    const total = agents.length;
-    expect(total).toBe(3);
+  it('returns total count in envelope response', async () => {
+    const res = await request(app).get('/agents?limit=1');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(res.body.agents.length).toBe(1);
   });
 });

@@ -179,11 +179,11 @@ Discover agents with optional filters and pagination support.
 **Example requests**
 
 ```bash
-# Get first 20 agents (default)
-curl http://localhost:4000/agents
+# Get first 20 agents (paginated, first page)
+curl "http://localhost:4000/agents?limit=20"
 
 # Get agents 21-40
-curl http://localhost:4000/agents?limit=20&offset=20
+curl "http://localhost:4000/agents?limit=20&offset=20"
 
 # Filter by capabilities and paginate
 curl http://localhost:4000/agents?capabilities=web-search,news&limit=10
@@ -195,7 +195,7 @@ curl http://localhost:4000/agents?min_reputation=70&limit=5&offset=10
 **Pagination design rationale**
 
 - Default limit of 20: Balances dashboard rendering performance with API efficiency for typical use cases
-- Maximum limit of 100: Prevents unbounded responses while allowing bulk operations
+- Maximum limit of 100: Applies only when pagination parameters are provided; prevents unbounded responses while allowing bulk operations
 - Reputation ordering: Ensures stable, deterministic pagination across requests
 - Backward compatibility: Existing clients without pagination params continue to work with bare array responses
 

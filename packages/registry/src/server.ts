@@ -111,7 +111,8 @@ app.get('/agents', (req, res) => {
     const clampedLimit = Math.max(1, Math.min(MAX_LIMIT, parsedLimit || DEFAULT_LIMIT));
 
     // Parse and clamp offset (default: 0, min: 0)
-    const parsedOffset = offset ? parseInt(offset as string, 10) : 0;
+    // Guard against non-numeric values (e.g. "abc") that would produce NaN
+    const parsedOffset = offset ? (parseInt(offset as string, 10) || 0) : 0;
     const clampedOffset = Math.max(0, parsedOffset);
 
     // Apply pagination
@@ -250,6 +251,12 @@ app.get('/.well-known/x402', (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  logger.info(`Service Registry running on http://localhost:${PORT}`);
-});
+// Export app for integration tests (supertest imports this without calling listen)
+export { app };
+
+// Only bind the port when this module is the entry-point, not during tests
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    logger.info(`Service Registry running on http://localhost:${PORT}`);
+  });
+}
