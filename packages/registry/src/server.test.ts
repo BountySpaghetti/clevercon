@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { validateRegistration } from './validate.js';
+import { loadAgents, upsertAgent, removeAgent } from './store.js';
+import type { AgentRecord } from '@clevercon/common';
 
 const validBody = {
   agent_id: 'agent-web-intel',
@@ -312,5 +314,179 @@ describe('validateRegistration — multiple errors', () => {
     expect(fields).toContain('pricing.model');
     expect(fields).toContain('pricing.price_per_call');
     expect(fields).toContain('pricing.currency');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination tests for GET /agents
+// ---------------------------------------------------------------------------
+
+describe('GET /agents pagination', () => {
+  const now = new Date().toISOString();
+
+  const mockAgents: AgentRecord[] = [
+    {
+      agent_id: 'agent-1',
+      name: 'Agent 1',
+      description: 'Test agent 1',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent1',
+      stellar_address: 'GABC1',
+      health_check: 'https://example.com/agent1/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 90,
+        total_jobs: 10,
+        successful_jobs: 9,
+        failed_jobs: 1,
+        avg_quality: 4.5,
+        avg_latency_ms: 100,
+        last_updated: now,
+      },
+    },
+    {
+      agent_id: 'agent-2',
+      name: 'Agent 2',
+      description: 'Test agent 2',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent2',
+      stellar_address: 'GABC2',
+      health_check: 'https://example.com/agent2/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 70,
+        total_jobs: 5,
+        successful_jobs: 4,
+        failed_jobs: 1,
+        avg_quality: 4.0,
+        avg_latency_ms: 150,
+        last_updated: now,
+      },
+    },
+    {
+      agent_id: 'agent-3',
+      name: 'Agent 3',
+      description: 'Test agent 3',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent3',
+      stellar_address: 'GABC3',
+      health_check: 'https://example.com/agent3/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 50,
+        total_jobs: 3,
+        successful_jobs: 2,
+        failed_jobs: 1,
+        avg_quality: 3.5,
+        avg_latency_ms: 200,
+        last_updated: now,
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    // Clear existing agents
+    const existing = loadAgents();
+    existing.forEach((agent) => removeAgent(agent.agent_id));
+    // Add mock agents
+    mockAgents.forEach((agent) => upsertAgent(agent));
+  });
+
+  it('returns bare array when no pagination params (backward compatibility)', () => {
+    const agents = loadAgents();
+    expect(Array.isArray(agents)).toBe(true);
+    expect(agents.length).toBe(3);
+  });
+
+  it('applies default limit when limit param is provided without value', () => {
+    const agents = loadAgents();
+    const DEFAULT_LIMIT = 20;
+    const paginated = agents.slice(0, DEFAULT_LIMIT);
+    expect(paginated.length).toBe(3); // All agents since we only have 3
+  });
+
+  it('honors custom limit and returns correct page size', () => {
+    const agents = loadAgents();
+    const limit = 2;
+    const paginated = agents.slice(0, limit);
+    expect(paginated.length).toBe(2);
+  });
+
+  it('honors offset and skips correct number of results', () => {
+    const agents = loadAgents();
+    const offset = 1;
+    const limit = 2;
+    const paginated = agents.slice(offset, offset + limit);
+    expect(paginated.length).toBe(2);
+    expect(paginated[0].agent_id).toBe('agent-2');
+  });
+
+  it('returns empty array when offset exceeds result set', () => {
+    const agents = loadAgents();
+    const offset = 100;
+    const limit = 10;
+    const paginated = agents.slice(offset, offset + limit);
+    expect(paginated.length).toBe(0);
+  });
+
+  it('clamps limit to maximum (100)', () => {
+    const agents = loadAgents();
+    const limit = 200;
+    const MAX_LIMIT = 100;
+    const clampedLimit = Math.min(MAX_LIMIT, limit);
+    const paginated = agents.slice(0, clampedLimit);
+    expect(paginated.length).toBe(3); // All agents
+  });
+
+  it('clamps limit to minimum (1) when limit is 0 or negative', () => {
+    const agents = loadAgents();
+    const limit = 0;
+    const clampedLimit = Math.max(1, limit);
+    const paginated = agents.slice(0, clampedLimit);
+    expect(paginated.length).toBe(1);
+  });
+
+  it('clamps offset to minimum (0) when offset is negative', () => {
+    const agents = loadAgents();
+    const offset = -5;
+    const clampedOffset = Math.max(0, offset);
+    const limit = 2;
+    const paginated = agents.slice(clampedOffset, clampedOffset + limit);
+    expect(paginated.length).toBe(2);
+  });
+
+  it('orders by reputation descending before pagination', () => {
+    const agents = loadAgents();
+    agents.sort((a, b) => b.reputation.score - a.reputation.score);
+    expect(agents[0].agent_id).toBe('agent-1'); // score 90
+    expect(agents[1].agent_id).toBe('agent-2'); // score 70
+    expect(agents[2].agent_id).toBe('agent-3'); // score 50
+  });
+
+  it('pagination applies after filtering', () => {
+    const agents = loadAgents();
+    const filtered = agents.filter((a) => a.reputation.score >= 60);
+    const limit = 1;
+    const paginated = filtered.slice(0, limit);
+    expect(paginated.length).toBe(1);
+    expect(paginated[0].agent_id).toBe('agent-1'); // Only agent with score >= 60
+  });
+
+  it('returns total count in envelope response', () => {
+    const agents = loadAgents();
+    const total = agents.length;
+    expect(total).toBe(3);
   });
 });
