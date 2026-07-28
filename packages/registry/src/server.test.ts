@@ -414,7 +414,7 @@ describe('GET /agents pagination', () => {
   });
 
   it('applies default limit when only limit param key is provided', async () => {
-    const res = await request(app).get('/agents?limit=20');
+    const res = await request(app).get('/agents?offset=0');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ total: 3, limit: 20, offset: 0 });
     expect(Array.isArray(res.body.agents)).toBe(true);
@@ -451,11 +451,11 @@ describe('GET /agents pagination', () => {
     expect(res.body.agents.length).toBe(3); // all 3 fit within clamped limit
   });
 
-  it('clamps limit to minimum (1) when limit is 0 — falls back to default', async () => {
-    // limit=0 is parsed as 0, which is falsy, so the server substitutes DEFAULT_LIMIT (20)
+  it('clamps limit to minimum (1) when limit is 0', async () => {
+    // limit=0 is parsed as 0, which is clamped to the minimum value of 1
     const res = await request(app).get('/agents?limit=0');
     expect(res.status).toBe(200);
-    expect(res.body.limit).toBe(20); // default limit applied when limit resolves to 0
+    expect(res.body.limit).toBe(1); // numeric zero is clamped to minimum of 1
     expect(Array.isArray(res.body.agents)).toBe(true);
   });
 
