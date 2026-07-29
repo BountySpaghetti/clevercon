@@ -1,4 +1,4 @@
-use crate::{AgentVault, AgentVaultClient, DataKey, VaultError};
+use crate::{AgentVault, AgentVaultClient, DataKey, TaskStatus, VaultError};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Events, Ledger as _};
 use soroban_sdk::{token, Address, Env};
@@ -61,6 +61,25 @@ fn create_task_history(test_env: &TestEnv, task_count: u32) -> Address {
     }
 
     user
+}
+
+fn create_status_test_task(test_env: &TestEnv, created_at: u64) -> (Address, Address, u64) {
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "status-orchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+
+    test_env.env.ledger().set_timestamp(created_at);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    (user, orchestrator, task_id)
 }
 
 // 1. Init Tests
@@ -1868,6 +1887,82 @@ fn test_get_user_task_infos_caps_limit() {
 // 11. Stale Task Threshold Tests
 
 #[test]
+fn test_get_task_status_returns_none_for_unknown_task() {
+    let t = setup_test();
+    t.client.init(&t.admin, &t.usdc_sac);
+
+    assert_eq!(t.client.get_task_status(&999), None);
+}
+
+#[test]
+fn test_get_task_status_matches_force_complete_boundary() {
+    let t = setup_test();
+    t.client.init(&t.admin, &t.usdc_sac);
+    let (_, _, task_id) = create_status_test_task(&t, 1000);
+
+    t.env.ledger().set_timestamp(1000 + 1800);
+    assert_eq!(t.client.get_task_status(&task_id), Some(TaskStatus::Active));
+    let result = t.client.try_force_complete_stale_task(&task_id);
+    assert!(result == Err(Ok(VaultError::TaskNotStale)));
+
+    t.env.ledger().set_timestamp(1000 + 1801);
+    assert_eq!(t.client.get_task_status(&task_id), Some(TaskStatus::Stale));
+
+    t.client.force_complete_stale_task(&task_id);
+    assert_eq!(
+        t.client.get_task_status(&task_id),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn test_get_task_status_completed_wins_after_threshold() {
+    let t = setup_test();
+    t.client.init(&t.admin, &t.usdc_sac);
+    let (_, orchestrator, task_id) = create_status_test_task(&t, 1000);
+
+    t.client.complete_task(&orchestrator, &task_id);
+    t.env.ledger().set_timestamp(1000 + 1801);
+
+    assert_eq!(
+        t.client.get_task_status(&task_id),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn test_get_task_status_cancelled_task_is_completed() {
+    let t = setup_test();
+    t.client.init(&t.admin, &t.usdc_sac);
+    let (user, _, task_id) = create_status_test_task(&t, 1000);
+
+    t.client.cancel_task(&user, &task_id);
+
+    assert_eq!(
+        t.client.get_task_status(&task_id),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn test_get_task_status_uses_threshold_changed_after_creation() {
+    let t = setup_test();
+    t.client.init(&t.admin, &t.usdc_sac);
+    let (_, _, task_id) = create_status_test_task(&t, 1000);
+
+    t.client.set_stale_threshold(&t.admin, &3600);
+
+    t.env.ledger().set_timestamp(1000 + 1801);
+    assert_eq!(t.client.get_task_status(&task_id), Some(TaskStatus::Active));
+
+    t.env.ledger().set_timestamp(1000 + 3600);
+    assert_eq!(t.client.get_task_status(&task_id), Some(TaskStatus::Active));
+
+    t.env.ledger().set_timestamp(1000 + 3601);
+    assert_eq!(t.client.get_task_status(&task_id), Some(TaskStatus::Stale));
+}
+
+#[test]
 fn test_get_stale_threshold_default() {
     let t = setup_test();
     t.client.init(&t.admin, &t.usdc_sac);
@@ -2639,5 +2734,5 @@ mod invariant_tests {
 #[test]
 fn test_version_returns_contract_version() {
     let test_env = setup_test();
-    assert_eq!(test_env.client.version(), 2);
+    assert_eq!(test_env.client.version(), 3);
 }

@@ -241,6 +241,15 @@ pub struct TaskInfo {
     pub created_at: u64,
 }
 
+/// Authoritative lifecycle state for a task at the current ledger timestamp.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskStatus {
+    Active,
+    Stale,
+    Completed,
+}
+
 // Constants
 
 /// Tasks older than this that haven't completed can be force-finalized by anyone.
@@ -268,7 +277,7 @@ const INSTANCE_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 /// deployment before assuming a given function or storage layout
 /// exists, especially important on Soroban where the same address
 /// can be upgraded in place.
-const CONTRACT_VERSION: u32 = 2;
+const CONTRACT_VERSION: u32 = 3;
 
 // Contract
 
@@ -843,10 +852,7 @@ impl AgentVault {
             return Err(VaultError::TaskAlreadyCompleted);
         }
 
-        let now = env.ledger().timestamp();
-        let elapsed = now - task.created_at;
-        let threshold = Self::get_stale_threshold(env.clone());
-        if elapsed <= threshold {
+        if !Self::is_task_stale(&env, &task) {
             return Err(VaultError::TaskNotStale);
         }
 
@@ -855,6 +861,12 @@ impl AgentVault {
     }
 
     // Internal helpers
+
+    /// Uses the live threshold so status queries and force completion cannot drift.
+    fn is_task_stale(env: &Env, task: &TaskInfo) -> bool {
+        let elapsed = env.ledger().timestamp() - task.created_at;
+        elapsed > Self::get_stale_threshold(env.clone())
+    }
 
     /// Panics if the contract is paused.
     fn require_not_paused(env: &Env) -> Result<(), VaultError> {
@@ -1161,6 +1173,21 @@ impl AgentVault {
             Self::extend_persistent_ttl(&env, &key);
         }
         result
+    }
+
+    /// Returns the task's lifecycle state at the current ledger timestamp.
+    pub fn get_task_status(env: Env, task_id: u64) -> Option<TaskStatus> {
+        let key = DataKey::Task(task_id);
+        let task: TaskInfo = env.storage().persistent().get(&key)?;
+        Self::extend_persistent_ttl(&env, &key);
+
+        if task.completed {
+            Some(TaskStatus::Completed)
+        } else if Self::is_task_stale(&env, &task) {
+            Some(TaskStatus::Stale)
+        } else {
+            Some(TaskStatus::Active)
+        }
     }
 
     pub fn get_user_tasks(env: Env, user: Address) -> soroban_sdk::Vec<u64> {
