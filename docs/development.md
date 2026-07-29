@@ -124,6 +124,81 @@ Build a single service with `npm run build:<name>` (e.g. `build:orchestrator`,
 `build:oracle`) — see `package.json` for the full list. Each maps to an
 esbuild invocation that bundles the service into `packages/<pkg>/dist/`.
 
+## Registry API endpoints
+
+### GET /agents
+
+Discover agents with optional filters and pagination support.
+
+**Query parameters**
+
+- `capabilities` (optional): Comma-separated list of required capabilities
+- `min_reputation` (optional): Minimum reputation score (0-100)
+- `payment_model` (optional): Filter by payment model (`x402` or `mpp`)
+- `status` (optional): Filter by agent status (e.g., `active`)
+- `limit` (optional): Number of results to return per page (default: 20, max: 100, min: 1)
+- `offset` (optional): Number of results to skip (default: 0, min: 0)
+
+**Behavior**
+
+- Agents are ordered by reputation score (highest first) before pagination
+- Pagination is applied after all filters
+- Invalid/negative values for `limit` and `offset` are clamped to valid ranges, not rejected
+- When `limit` or `offset` are provided, the response includes an envelope with metadata
+- When neither `limit` nor `offset` are provided, the response is a bare array (backward compatible)
+
+**Response without pagination (backward compatible)**
+
+```json
+[
+  {
+    "agent_id": "agent-web-intel",
+    "name": "Web Intel Agent",
+    ...
+  }
+]
+```
+
+**Response with pagination**
+
+```json
+{
+  "agents": [
+    {
+      "agent_id": "agent-web-intel",
+      "name": "Web Intel Agent",
+      ...
+    }
+  ],
+  "total": 45,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+**Example requests**
+
+```bash
+# Get first 20 agents (paginated, first page)
+curl "http://localhost:4000/agents?limit=20"
+
+# Get agents 21-40
+curl "http://localhost:4000/agents?limit=20&offset=20"
+
+# Filter by capabilities and paginate
+curl http://localhost:4000/agents?capabilities=web-search,news&limit=10
+
+# Filter by minimum reputation and paginate
+curl http://localhost:4000/agents?min_reputation=70&limit=5&offset=10
+```
+
+**Pagination design rationale**
+
+- Default limit of 20: Balances dashboard rendering performance with API efficiency for typical use cases
+- Maximum limit of 100: Applies only when pagination parameters are provided; prevents unbounded responses while allowing bulk operations
+- Reputation ordering: Ensures stable, deterministic pagination across requests
+- Backward compatibility: Existing clients without pagination params continue to work with bare array responses
+
 ## Orchestrator API endpoints
 
 ### POST /api/tasks/preview

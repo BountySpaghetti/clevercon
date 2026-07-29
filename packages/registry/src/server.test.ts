@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import request from 'supertest';
 import { validateRegistration } from './validate.js';
+import { loadAgents, upsertAgent, removeAgent } from './store.js';
+import { app } from './server.js';
+import type { AgentRecord } from '@clevercon/common';
 
 const validBody = {
   agent_id: 'agent-web-intel',
@@ -312,5 +316,176 @@ describe('validateRegistration — multiple errors', () => {
     expect(fields).toContain('pricing.model');
     expect(fields).toContain('pricing.price_per_call');
     expect(fields).toContain('pricing.currency');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination tests for GET /agents
+// ---------------------------------------------------------------------------
+
+describe('GET /agents pagination', () => {
+  const now = new Date().toISOString();
+
+  const mockAgents: AgentRecord[] = [
+    {
+      agent_id: 'agent-1',
+      name: 'Agent 1',
+      description: 'Test agent 1',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent1',
+      stellar_address: 'GABC1',
+      health_check: 'https://example.com/agent1/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 90,
+        total_jobs: 10,
+        successful_jobs: 9,
+        failed_jobs: 1,
+        avg_quality: 4.5,
+        avg_latency_ms: 100,
+        last_updated: now,
+      },
+    },
+    {
+      agent_id: 'agent-2',
+      name: 'Agent 2',
+      description: 'Test agent 2',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent2',
+      stellar_address: 'GABC2',
+      health_check: 'https://example.com/agent2/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 70,
+        total_jobs: 5,
+        successful_jobs: 4,
+        failed_jobs: 1,
+        avg_quality: 4.0,
+        avg_latency_ms: 150,
+        last_updated: now,
+      },
+    },
+    {
+      agent_id: 'agent-3',
+      name: 'Agent 3',
+      description: 'Test agent 3',
+      capabilities: ['test'],
+      pricing: { model: 'x402', price_per_call: 0.05, currency: 'USDC' },
+      endpoint: 'https://example.com/agent3',
+      stellar_address: 'GABC3',
+      health_check: 'https://example.com/agent3/health',
+      registered_by: 'user1',
+      registered_at: now,
+      last_seen: now,
+      status: 'active',
+      reputation: {
+        score: 50,
+        total_jobs: 3,
+        successful_jobs: 2,
+        failed_jobs: 1,
+        avg_quality: 3.5,
+        avg_latency_ms: 200,
+        last_updated: now,
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    // Clear existing agents
+    const existing = loadAgents();
+    existing.forEach((agent) => removeAgent(agent.agent_id));
+    // Add mock agents
+    mockAgents.forEach((agent) => upsertAgent(agent));
+  });
+
+  it('returns bare array when no pagination params (backward compatibility)', async () => {
+    const res = await request(app).get('/agents');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBe(3);
+  });
+
+  it('applies default limit when only limit param key is provided', async () => {
+    const res = await request(app).get('/agents?offset=0');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total: 3, limit: 20, offset: 0 });
+    expect(Array.isArray(res.body.agents)).toBe(true);
+    expect(res.body.agents.length).toBe(3); // all agents fit within default limit
+  });
+
+  it('honors custom limit and returns correct page size', async () => {
+    const res = await request(app).get('/agents?limit=2');
+    expect(res.status).toBe(200);
+    expect(res.body.agents.length).toBe(2);
+    expect(res.body.limit).toBe(2);
+    expect(res.body.total).toBe(3);
+  });
+
+  it('honors offset and skips correct number of results', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=1');
+    expect(res.status).toBe(200);
+    expect(res.body.agents.length).toBe(2);
+    expect(res.body.agents[0].agent_id).toBe('agent-2');
+    expect(res.body.offset).toBe(1);
+  });
+
+  it('returns empty array when offset exceeds result set', async () => {
+    const res = await request(app).get('/agents?limit=10&offset=100');
+    expect(res.status).toBe(200);
+    expect(res.body.agents).toEqual([]);
+    expect(res.body.total).toBe(3);
+  });
+
+  it('clamps limit to maximum (100)', async () => {
+    const res = await request(app).get('/agents?limit=200');
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(100);
+    expect(res.body.agents.length).toBe(3); // all 3 fit within clamped limit
+  });
+
+  it('clamps limit to minimum (1) when limit is 0', async () => {
+    // limit=0 is parsed as 0, which is clamped to the minimum value of 1
+    const res = await request(app).get('/agents?limit=0');
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(1); // numeric zero is clamped to minimum of 1
+    expect(Array.isArray(res.body.agents)).toBe(true);
+  });
+
+  it('clamps offset to minimum (0) when offset is negative', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=-5');
+    expect(res.status).toBe(200);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.agents.length).toBe(2);
+  });
+
+  it('treats non-numeric offset (e.g. "abc") as 0', async () => {
+    const res = await request(app).get('/agents?limit=2&offset=abc');
+    expect(res.status).toBe(200);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.agents.length).toBe(2);
+  });
+
+  it('orders agents by reputation descending before pagination', async () => {
+    const res = await request(app).get('/agents?limit=3');
+    expect(res.status).toBe(200);
+    const ids = res.body.agents.map((a: AgentRecord) => a.agent_id);
+    expect(ids[0]).toBe('agent-1'); // score 90
+    expect(ids[1]).toBe('agent-2'); // score 70
+    expect(ids[2]).toBe('agent-3'); // score 50
+  });
+
+  it('returns total count in envelope response', async () => {
+    const res = await request(app).get('/agents?limit=1');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(res.body.agents.length).toBe(1);
   });
 });
