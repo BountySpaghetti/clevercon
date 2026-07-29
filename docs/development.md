@@ -180,6 +180,56 @@ curl -s -X POST http://localhost:3000/api/tasks/preview \
   -d '{"prompt": "summarise yesterday Stellar DEX volume", "budget": 1.0}' | jq .
 ```
 
+### GET /metrics
+
+Operational counters for the orchestrator process — task throughput, step
+outcomes, USDC released, and step-latency percentiles. Intended for a status
+dashboard or an alerting rule; no authentication, no user address required.
+
+The response is **plain JSON** (not Prometheus text exposition). The shape is
+stable — fields may be added, but existing ones keep their names and meaning.
+
+```json
+{
+  "uptime_seconds": 3612,
+  "tasks": { "total": 42, "active": 1, "completed": 38, "failed": 2, "interrupted": 1 },
+  "steps": { "executed": 126, "failed": 4, "timed_out": 2 },
+  "usdc_released_total": 2.34,
+  "step_duration_ms": { "count": 126, "p50_ms": 840, "p95_ms": 15000, "max_ms": 21400 },
+  "memory": { "rss_bytes": 91234304, "heap_used_bytes": 42118400 }
+}
+```
+
+Field notes:
+
+| Field | Meaning |
+|---|---|
+| `tasks.total` | Tasks submitted, including those seeded from the activity log |
+| `tasks.active` | In flight **in this process** right now |
+| `tasks.interrupted` | Were in flight when a previous process exited — seeded at startup, never incremented at runtime |
+| `steps.executed` | Step attempts that finished, successfully or not |
+| `steps.failed` | Subset of `executed` that failed |
+| `steps.timed_out` | Subset of `failed` whose error text reads as a timeout |
+| `usdc_released_total` | USDC released from the vault to the orchestrator wallet |
+| `step_duration_ms` | Percentiles over the most recent 1024 step attempts (fixed-size ring, so memory is bounded); `null` until the first step runs |
+
+Counters are per-process and dependency-free (`packages/orchestrator/src/metrics.ts`
+— no metrics library). On startup they are seeded from `data/activity-log.json`
+and `data/task-results.json` so a redeploy doesn't zero the totals. Because
+activity events are only written for tasks that carry a `user_address`,
+anonymous tasks contribute to live counters but are not restored across a
+restart.
+
+`tasks.total` is not guaranteed to equal `active + completed + failed +
+interrupted`: a task interrupted by a restart is counted in `total` when it
+starts and in `interrupted` only after the *next* startup reads the log.
+
+**Example curl**
+
+```bash
+curl -s http://localhost:3000/metrics | jq .
+```
+
 ## Testing
 
 Unit tests use [Vitest](https://vitest.dev/) and are colocated with the code
@@ -193,6 +243,9 @@ to verify in isolation:
 - `packages/orchestrator/src/validator.test.ts` — execution plan validation.
 - `packages/orchestrator/src/server.preview.test.ts` — `/api/tasks/preview`
   endpoint (happy path, no-agents 503, infeasible 422).
+- `packages/orchestrator/src/metrics.test.ts` — counter transitions, timeout
+  classification, percentile math, ring-buffer bounding, and startup seeding.
+- `packages/orchestrator/src/server.metrics.test.ts` — `/metrics` response shape.
 
 Run the full suite with `npm test`, or scope to a package with
 `npm test -w packages/registry`.

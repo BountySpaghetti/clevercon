@@ -84,6 +84,11 @@ export function getTaskResults(userAddress: string, limit = 50): TaskResultEntry
     .reverse();
 }
 
+/** Every persisted result, oldest first. Used to seed metrics at startup. */
+export function getAllTaskResults(): TaskResultEntry[] {
+  return load();
+}
+
 export function deleteTaskResult(taskId: string): boolean {
   const store = load();
   const before = store.length;

@@ -27,6 +27,7 @@ import { makeX402Payment } from './x402-client.js';
 import { makeMPPPayment } from './mpp-client.js';
 import { rateResponse } from './rater.js';
 import { releasePayment, VAULT_ACTIVE } from './agent-vault-client.js';
+import { stepExecuted, stepFailed, usdcReleased } from './metrics.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -279,6 +280,7 @@ export class PlanExecutor extends EventEmitter {
         }
 
         releaseHash = typeof released === 'string' ? released : null;
+        usdcReleased(amountUsdc);
         // Wrap emit in try/catch — a serialization error must never kill a step
         try {
           this.emit('budget_released', {
@@ -322,6 +324,7 @@ export class PlanExecutor extends EventEmitter {
       }
 
       const latency_ms = Date.now() - stepStart;
+      stepExecuted(latency_ms);
       const quality_rating = await rateResponse(step.action, output);
 
       const result: StepResult = {
@@ -383,7 +386,12 @@ export class PlanExecutor extends EventEmitter {
     }
   }
 
+  /**
+   * Build the StepResult for a failed step. Every failure path routes through
+   * here, so this is also where the failure is counted.
+   */
   private makeFailedResult(step: ExecutionStep, error: string, latency_ms: number): StepResult {
+    stepFailed(error, latency_ms);
     return {
       step_id: step.step_id,
       agent_id: step.agent_id,

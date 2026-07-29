@@ -11,6 +11,7 @@
  * POST   /api/orchestrators         — create a personal orchestrator for a user
  * POST   /api/orchestrators/confirm — submit signed on-chain registration XDR
  * GET  /health                      — liveness check
+ * GET  /metrics                     — operational counters (JSON)
  * WS   /ws                          — real-time task event stream
  */
 import 'dotenv/config';
@@ -48,7 +49,13 @@ import {
 import * as orchestratorStore from './orchestrator-store.js';
 import * as activityStore from './activity-store.js';
 import { appendVaultTx, getVaultLedger } from './vault-ledger.js';
-import { saveTaskResult, getTaskResults, deleteTaskResult } from './task-results.js';
+import {
+  saveTaskResult,
+  getTaskResults,
+  deleteTaskResult,
+  getAllTaskResults,
+} from './task-results.js';
+import { getMetrics, seedMetrics, taskStarted, taskCompleted, taskFailed } from './metrics.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -312,6 +319,11 @@ app.get('/', (_req, res) => {
 // Health
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', agent: 'Orchestrator', address: ORCHESTRATOR_ADDRESS });
+});
+
+// Operational counters — see docs/development.md for the response shape
+app.get('/metrics', (_req, res) => {
+  res.json(getMetrics());
 });
 
 // List agents from registry
@@ -965,6 +977,9 @@ app.post('/api/tasks', async (req, res) => {
   broadcast('task_accepted', { task_id, task, budget: taskBudget });
 
   runTask(task_id, task, taskBudget, user_address ?? null, webhook_url).catch((err) => {
+    // Backstop: runTask handles its own errors, so reaching here means its
+    // handler threw. taskFailed is idempotent, so a double call is harmless.
+    taskFailed(task_id);
     console.error('[Orchestrator] Task pipeline error:', err.message);
     broadcast('task_error', { task_id, task, error: err.message });
   });
@@ -1075,6 +1090,8 @@ async function runTask(
   let orchestratorKeypair: Keypair | null = null;
   let vaultTaskId: bigint | null = null;
   const VAULT_CONTRACT_URL = `https://stellar.expert/explorer/testnet/contract/${process.env.AGENT_VAULT_CONTRACT_ID}`;
+
+  taskStarted(task_id);
 
   try {
     // 1. Fetch available agents
@@ -1353,6 +1370,7 @@ async function runTask(
 
     // Trigger webhook on complete/failed execution status
     if (result.status === 'failed') {
+      taskFailed(task_id);
       const failedStep = result.steps.find((s) => !s.success);
       triggerWebhook({
         task_id,
@@ -1361,6 +1379,7 @@ async function runTask(
         completed_at: new Date().toISOString(),
       });
     } else {
+      taskCompleted(task_id);
       triggerWebhook({
         task_id,
         status: result.status === 'partial' ? 'partial' : 'completed',
@@ -1371,6 +1390,9 @@ async function runTask(
       });
     }
   } catch (err: any) {
+    // Move the task out of `active` before anything that could itself throw
+    taskFailed(task_id);
+
     // Try to complete the vault task even on error to unlock funds
     if (VAULT_ACTIVE && orchestratorKeypair && vaultTaskId !== null) {
       vaultCompleteTask(orchestratorKeypair, vaultTaskId).catch(() => {});
@@ -1413,6 +1435,14 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 if (!process.env.VITEST) {
+  // Restore what the persisted stores still know so a restart doesn't zero the
+  // totals. Best-effort: metrics must never block startup.
+  try {
+    seedMetrics({ pulse: activityStore.getPulse(), taskResults: getAllTaskResults() });
+  } catch (err: any) {
+    console.warn(`[Orchestrator] Metrics seed skipped: ${err.message}`);
+  }
+
   server.listen(PORT, () => {
     console.log(`[Orchestrator] Running on port ${PORT}`);
     console.log(`[Orchestrator] Wallet: ${ORCHESTRATOR_ADDRESS}`);
