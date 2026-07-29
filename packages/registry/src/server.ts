@@ -109,11 +109,14 @@ app.get('/agents', (req, res) => {
     const MAX_LIMIT = 100;
     const parsedLimit = limit ? parseInt(limit as string, 10) : DEFAULT_LIMIT;
     // Use default only for NaN or absent, clamp numeric zero to 1
-    const clampedLimit = Math.max(1, Math.min(MAX_LIMIT, Number.isNaN(parsedLimit) ? DEFAULT_LIMIT : parsedLimit));
+    const clampedLimit = Math.max(
+      1,
+      Math.min(MAX_LIMIT, Number.isNaN(parsedLimit) ? DEFAULT_LIMIT : parsedLimit),
+    );
 
     // Parse and clamp offset (default: 0, min: 0)
     // Guard against non-numeric values (e.g. "abc") that would produce NaN
-    const parsedOffset = offset ? (parseInt(offset as string, 10) || 0) : 0;
+    const parsedOffset = offset ? parseInt(offset as string, 10) || 0 : 0;
     const clampedOffset = Math.max(0, parsedOffset);
 
     // Apply pagination
