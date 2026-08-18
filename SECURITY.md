@@ -5,8 +5,8 @@
 CleverCon currently runs on **Stellar Testnet**. Contracts, wallets, and
 funds involved are all testnet assets with no real-world value. That said, we
 treat security issues seriously even at this stage, since the CleverVault
-contract design and orchestration logic are the foundation for a future
-mainnet deployment.
+contract design, its planned zero-knowledge policy-enforcement layer, and the
+orchestration logic are the foundation for a future mainnet deployment.
 
 ## Reporting a vulnerability
 
@@ -41,6 +41,11 @@ In scope:
   payment construction/signing, vault interaction, and data persisted to disk
   (e.g. wallet secrets in `packages/orchestrator/src/orchestrator-store.ts`).
 - `packages/agents/*` — payment verification on specialist agent endpoints.
+- The zero-knowledge policy-enforcement layer being integrated into CleverVault
+  (proof verification path, policy commitments, nullifier/replay handling, and
+  guest-program image-ID pinning). The engine currently lives in
+  [CipherMit](https://github.com/Bosun-Josh121/ciphermit); report issues there
+  or here.
 - `scripts/*` and CI/deployment configuration (`render.yaml`,
   `.github/workflows/*`).
 

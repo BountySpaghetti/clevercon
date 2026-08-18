@@ -1,8 +1,10 @@
 # Contributing to CleverCon
 
-Thanks for your interest in contributing to CleverCon — an open service
-marketplace and orchestration layer on Stellar. This guide covers how to set
-up the project, the workflow we use, and what we look for in a pull request.
+Thanks for your interest in contributing to CleverCon — a protocol for private,
+policy-bounded delegation of money to AI agents on Stellar (a non-custodial
+Soroban vault, an orchestration layer, and an open agent marketplace). This
+guide covers how to set up the project, the workflow we use, and what we look
+for in a pull request.
 
 ## Ways to contribute
 
@@ -164,13 +166,14 @@ Open issues are labeled by **package/area** (e.g. `agent-vault`,
 [GrantFox](https://grantfox.xyz) are labeled `bounty` with the amount noted in
 the issue body.
 
-Priority is currently on four components: the CleverVault contract, an
-on-chain Agent Registry contract, a Stellar MCP server, and the specialist
-Agent SDK. See [ROADMAP.md](ROADMAP.md) for details. Beyond those, building
-and registering new specialist services is a great contribution path: your
-service can be LLM-powered, a traditional API gateway, a computation service,
-a verification service, or anything else that exposes an HTTP endpoint and
-supports x402 or MPP payment.
+Priority is currently on: **private policy enforcement in CleverVault** (the
+zero-knowledge policy layer — Phase 1, the defining piece), hardening the
+CleverVault contract, an on-chain Agent Registry contract, a Stellar MCP server,
+and the specialist Agent SDK. See [ROADMAP.md](ROADMAP.md) for details. Beyond
+those, building and registering new specialist services is a great contribution
+path: your service can be LLM-powered, a traditional API gateway, a computation
+service, a verification service, or anything else that exposes an HTTP endpoint
+and supports x402 or MPP payment.
 
 ## Getting help
 
