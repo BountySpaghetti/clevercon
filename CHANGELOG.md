@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Repositioned the project around **private, policy-bounded delegation of money
+  to AI agents**: a non-custodial CleverVault under a private, zero-knowledge-
+  enforced spending policy. Updated `README.md`, `docs/architecture.md`, and
+  `ROADMAP.md` to lead with this framing, with a clear line between what is live
+  on testnet today (non-custodial vault + orchestration + agents) and the
+  grant-scope roadmap (ZK policy enforcement, audit, mainnet).
+
 ### Added
 
+- Roadmap Phase 1: integrate the zero-knowledge policy engine — already deployed
+  and demonstrated on testnet as [CipherMit](https://github.com/Bosun-Josh121/ciphermit)
+  (RISC Zero zkVM + Groth16, verified proofs for allowance/allowlist/delegation)
+  — into CleverVault as its enforcement core.
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, and this
   changelog.
 - `docs/architecture.md` and `docs/development.md`.

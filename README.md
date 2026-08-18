@@ -2,7 +2,7 @@
 
 # CleverCon
 
-**On-chain service marketplace on Stellar. AI-focused today, service-agnostic by design.**
+**Private, policy-bounded delegation of money to AI agents on Stellar.**
 
 [![CI](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml/badge.svg)](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -15,16 +15,68 @@
 
 ## Overview
 
-CleverCon is an on-chain service marketplace built on Stellar. Users describe a task in plain English, deposit USDC into a smart contract vault, and an orchestrator breaks the work into steps, hires specialist agents from an open registry, and pays each one in real USDC as the steps complete.
+CleverCon lets a user hand a budget to an AI agent under a spending policy that
+is enforced on-chain and kept private.
 
-The current agent network is AI-focused: specialists handle data lookup, analysis, and reporting. But the protocol itself is service-agnostic. Any HTTP service with a Stellar wallet and support for x402 or MPP payment can register and earn USDC. Future agents could be data oracles, computation services, paid APIs, verification services, or human-in-the-loop workers.
+You describe a task in plain English and deposit USDC into **CleverVault** — a
+non-custodial Soroban contract. An orchestrator breaks the task into steps,
+hires specialist agents from an open registry, and pays each one in real USDC
+as the steps complete. The operator never custodies your funds, and unused
+budget is refunded automatically.
 
-- **Planner:** currently Claude Sonnet, with a pluggable LLM provider interface on the roadmap. Decomposes the task into steps, each assigned to a specialist.
-- **CleverVault:** a Soroban smart contract that holds user USDC and releases payment per completed step. The operator never custodies user funds.
-- **Payment:** specialists are paid via x402 (per-call HTTP micropayments) or MPP (streaming session payments), selected from the registry based on capability match, price, latency, and reputation.
-- Unused budget is refunded automatically when a task finishes.
+The direction that defines the project: the funds you lock are governed by a
+**private spending policy** — a rolling allowance, an allowlist of approved
+agents, or a per-task delegation cap — committed on-chain as a cryptographic
+hash. Every payment the orchestrator releases must carry a **zero-knowledge
+proof** that it complies with that policy. The agent never sees your rule, the
+chain never sees your rule, and the operator cannot spend outside it.
 
-See [docs/architecture.md](docs/architecture.md) for the full system diagram, fund-flow sequence, and trust model.
+This is the difference between CleverCon and custodial, backend-enforced agent
+wallets. Where those hold your key on a server and check your limits off-chain,
+CleverCon keeps custody in a contract the operator cannot drain and moves policy
+enforcement **on-chain and private**. The zero-knowledge vault design is not
+speculative — we have already built and deployed it on Stellar testnet
+([CipherMit](https://github.com/Bosun-Josh121/ciphermit), live at
+[ciphermit.vercel.app](https://ciphermit.vercel.app), with verified proofs for
+allowance, allowlist, and delegation policies). The near-term roadmap integrates
+that engine into CleverVault as its enforcement core.
+
+The current agent network is AI-focused — specialists handle data lookup,
+analysis, and reporting — but the protocol is service-agnostic. Any HTTP service
+with a Stellar wallet and x402 or MPP support can register and earn USDC.
+
+## Status at a glance
+
+### Live today (Stellar Testnet)
+
+- **CleverVault** — non-custodial Soroban treasury: deposits, per-task budget
+  locking, per-step payment release capped on-chain, automatic refunds,
+  multi-asset support, stale-task recovery, and pause/admin controls. Backed by
+  a 100+ case Rust test suite.
+- **Orchestrator** — LLM-driven task planning (currently Claude Sonnet),
+  feasibility checking, agent selection/scoring, and a dependency-aware
+  execution engine.
+- **Open agent registry** — self-registration, capability search, and an
+  Elo-style reputation score updated after every job.
+- **Five specialist agents** paid via x402 or MPP.
+- **React dashboard** for connecting a wallet, funding the vault, approving
+  plans, and viewing history.
+- 2nd place, Stellar Agents (x402 / MPP) hackathon.
+
+### Grant scope (in progress)
+
+- **Zero-knowledge policy enforcement** in CleverVault — a user locks funds
+  under a private policy (allowance / allowlist / delegation / compliance),
+  and each release is gated by a Groth16 proof (RISC Zero zkVM) verified
+  on-chain, integrating our proven testnet ZK vault.
+- **Security audit** of CleverVault and the verifier.
+- **Mainnet deployment** with mainnet USDC and multi-asset support.
+- **On-chain agent registry**, a **Stellar MCP server**, and a **specialist
+  Agent SDK**.
+
+See [ROADMAP.md](ROADMAP.md) for the phased plan and
+[docs/architecture.md](docs/architecture.md) for the system diagram, fund-flow
+sequence, and trust model.
 
 ## Project structure
 
@@ -49,11 +101,17 @@ clevercon/
 └── render.yaml                Render deployment blueprint (7 services)
 ```
 
+The zero-knowledge policy engine (RISC Zero guest programs, Groth16 verifier
+router, prover service) lives in [CipherMit](https://github.com/Bosun-Josh121/ciphermit)
+today and is being integrated into `contracts/agent-vault` per
+[ROADMAP.md](ROADMAP.md); it is not yet part of this repository.
+
 ## Tech stack
 
 | Layer | Technology |
 |---|---|
 | Smart contract | Rust / Soroban — CleverVault |
+| Zero-knowledge (grant scope) | RISC Zero zkVM + Groth16 proofs, verified on-chain via a Soroban verifier router |
 | Backend | Node.js 20, Express, TypeScript (npm workspaces) |
 | Frontend | React 19, Vite, Tailwind CSS |
 | LLM (current) | Claude Sonnet (planning) + Claude Haiku (rating) — pluggable provider planned |
@@ -171,11 +229,12 @@ for the agent interface contract.
 |---|---|---|
 | CleverVault contract | Stellar Testnet | [`CDFLEJ2H...D4LRTE`](https://stellar.expert/explorer/testnet/contract/CDFLEJ2HFPK3WKFTWB4CKP2JHEYNAUWKXGEJRYW4YMMGDSQSQ7D4LRTE) |
 | USDC (SAC) | Stellar Testnet | [`CBIELTK6...HMXQDAMA`](https://stellar.expert/explorer/testnet/contract/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA) |
+| ZK policy vault (CipherMit, prior work) | Stellar Testnet | [`CBHDNNIN...Q4NDW7C`](https://stellar.expert/explorer/testnet/contract/CBHDNNIN76GWDVH3IGV43J2RM3DJSLN2VTTBOU3O5WITKIOSBQ4NDW7C) |
 | Orchestrator + Dashboard | Render | https://clevercon-orchestrator.onrender.com |
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) - system overview, fund flow, trust model, protocols
+- [Architecture](docs/architecture.md) - system overview, fund flow, private policy layer, trust model, protocols
 - [Development guide](docs/development.md) - setup, common tasks, debugging
 - [Roadmap](ROADMAP.md) - where the project is headed
 - [Changelog](CHANGELOG.md)
@@ -183,6 +242,10 @@ for the agent interface contract.
 - [Contributing](CONTRIBUTING.md)
 
 ## Related Projects
+
+[CipherMit](https://github.com/Bosun-Josh121/ciphermit) is the maintainer's
+zero-knowledge vault for private, provable spending rules on Stellar — the
+engine being integrated as CleverVault's policy-enforcement core.
 
 [Conductor](https://github.com/Bosun-Josh121/conductor) is a sister project that
 integrates AI agents into Trustless Work escrow milestone verification. Different
