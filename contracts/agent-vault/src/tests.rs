@@ -1,7 +1,7 @@
 use crate::{AgentVault, AgentVaultClient, DataKey, TaskStatus, VaultError};
 use soroban_sdk::testutils::storage::Persistent as _;
 use soroban_sdk::testutils::{Address as _, Events, Ledger as _};
-use soroban_sdk::{token, Address, Env};
+use soroban_sdk::{token, Address, Env, IntoVal, Symbol, Val};
 
 struct TestEnv {
     env: Env,
@@ -2734,5 +2734,457 @@ mod invariant_tests {
 #[test]
 fn test_version_returns_contract_version() {
     let test_env = setup_test();
-    assert_eq!(test_env.client.version(), 3);
+    assert_eq!(test_env.client.version(), 4);
+}
+
+// 13. Dispute & Arbitration Tests
+
+/// Sets up a user with 500 deposited USDC, a registered orchestrator, the given
+/// dispute resolver, and a 300-cost active task. Returns (user, orchestrator, task_id).
+fn setup_dispute_task(test_env: &TestEnv, resolver: Address) -> (Address, Address, u64) {
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "DisputeOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    test_env
+        .client
+        .set_dispute_resolver(&test_env.admin, &resolver);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    (user, orchestrator, task_id)
+}
+
+#[test]
+fn test_set_and_get_dispute_resolver() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    assert!(test_env.client.get_dispute_resolver().is_none());
+
+    let resolver = Address::generate(&test_env.env);
+    test_env
+        .client
+        .set_dispute_resolver(&test_env.admin, &resolver);
+    assert_eq!(
+        test_env.client.get_dispute_resolver(),
+        Some(resolver.clone())
+    );
+
+    // The admin may update the resolver at any time.
+    let new_resolver = Address::generate(&test_env.env);
+    test_env
+        .client
+        .set_dispute_resolver(&test_env.admin, &new_resolver);
+    assert_eq!(test_env.client.get_dispute_resolver(), Some(new_resolver));
+}
+
+#[test]
+fn test_set_dispute_resolver_unauthorized_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let non_admin = Address::generate(&test_env.env);
+    let resolver = Address::generate(&test_env.env);
+
+    let result = test_env
+        .client
+        .try_set_dispute_resolver(&non_admin, &resolver);
+    assert!(result == Err(Ok(VaultError::Unauthorized)));
+}
+
+#[test]
+fn test_dispute_happy_path_split() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    // Orchestrator already released 100 of the 300 plan cost.
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+
+    // User raises the dispute: it freezes releases and completion.
+    test_env.client.raise_dispute(&user, &task_id);
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.disputed);
+    assert!(!task.completed);
+    assert_eq!(
+        test_env.client.get_task_status(&task_id),
+        Some(TaskStatus::Disputed)
+    );
+
+    let rel = test_env
+        .client
+        .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &50);
+    assert!(rel == Err(Ok(VaultError::TaskDisputed)));
+    let cmp = test_env.client.try_complete_task(&orchestrator, &task_id);
+    assert!(cmp == Err(Ok(VaultError::TaskDisputed)));
+
+    // Resolver settles the 200 still-locked remainder as an 80/120 split.
+    test_env
+        .client
+        .resolve_dispute(&resolver, &task_id, &80, &120);
+
+    // Tokens: 100 already released + 120 payout to orchestrator, 80 refund to
+    // user. Contract keeps 500 - 100 - 80 - 120 = 200.
+    assert_eq!(test_env.token_client.balance(&user), 580); // 1000 minted - 500 deposited + 80 refund
+    assert_eq!(test_env.token_client.balance(&orchestrator), 220); // 100 released + 120 payout
+    assert_eq!(test_env.token_client.balance(&test_env.contract_id), 200);
+
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.completed);
+    assert_eq!(
+        test_env.client.get_task_status(&task_id),
+        Some(TaskStatus::Completed)
+    );
+
+    // Accounting invariants after resolution: 0 <= locked <= balance.
+    let account = test_env
+        .client
+        .get_account(&user, &test_env.usdc_sac)
+        .unwrap();
+    assert_eq!(account.locked, 0);
+    assert_eq!(account.balance, 200); // 500 - plan_cost(300)
+    assert_eq!(account.total_spent, 220); // released 100 + payout 120
+    assert_eq!(account.active_tasks_count, 0);
+}
+
+#[test]
+fn test_resolve_dispute_non_resolver_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    let impostor = Address::generate(&test_env.env);
+    let result = test_env
+        .client
+        .try_resolve_dispute(&impostor, &task_id, &300, &0);
+    assert!(result == Err(Ok(VaultError::NotDisputeResolver)));
+
+    // Still disputed and unresolved.
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.disputed);
+    assert!(!task.completed);
+}
+
+#[test]
+fn test_resolve_dispute_without_resolver_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    // No dispute resolver is configured at all.
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "Orch");
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    let anyone = Address::generate(&test_env.env);
+    let result = test_env
+        .client
+        .try_resolve_dispute(&anyone, &task_id, &300, &0);
+    assert!(result == Err(Ok(VaultError::DisputeResolverNotSet)));
+}
+
+#[test]
+fn test_raise_dispute_non_user_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (_user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+
+    let attacker = Address::generate(&test_env.env);
+    let result = test_env.client.try_raise_dispute(&attacker, &task_id);
+    assert!(result == Err(Ok(VaultError::NotYourTask)));
+}
+
+#[test]
+fn test_raise_dispute_on_completed_task_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+    test_env.client.complete_task(&orchestrator, &task_id);
+
+    let result = test_env.client.try_raise_dispute(&user, &task_id);
+    assert!(result == Err(Ok(VaultError::TaskAlreadyCompleted)));
+}
+
+#[test]
+fn test_raise_dispute_nonexistent_task_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let user = Address::generate(&test_env.env);
+
+    let result = test_env.client.try_raise_dispute(&user, &999);
+    assert!(result == Err(Ok(VaultError::TaskNotFound)));
+}
+
+#[test]
+fn test_raise_dispute_twice_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    let result = test_env.client.try_raise_dispute(&user, &task_id);
+    assert!(result == Err(Ok(VaultError::TaskDisputed)));
+}
+
+#[test]
+fn test_resolve_dispute_split_mismatch_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+    test_env.client.raise_dispute(&user, &task_id);
+
+    // Remaining locked is 300; a 150/100 split does not sum to it.
+    let result = test_env
+        .client
+        .try_resolve_dispute(&resolver, &task_id, &150, &100);
+    assert!(result == Err(Ok(VaultError::DisputeSplitMismatch)));
+
+    // The task is still disputed and unresolved.
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.disputed);
+    assert!(!task.completed);
+}
+
+#[test]
+fn test_resolve_dispute_negative_split_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+    test_env.client.raise_dispute(&user, &task_id);
+
+    let result = test_env
+        .client
+        .try_resolve_dispute(&resolver, &task_id, &-1, &301);
+    assert!(result == Err(Ok(VaultError::InvalidAmount)));
+}
+
+#[test]
+fn test_resolve_dispute_on_non_disputed_task_fails() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (_user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    let result = test_env
+        .client
+        .try_resolve_dispute(&resolver, &task_id, &300, &0);
+    assert!(result == Err(Ok(VaultError::TaskNotDisputed)));
+}
+
+#[test]
+fn test_cancel_task_blocked_by_dispute() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    let result = test_env.client.try_cancel_task(&user, &task_id);
+    assert!(result == Err(Ok(VaultError::TaskDisputed)));
+
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.disputed);
+    assert!(!task.completed);
+}
+
+#[test]
+fn test_force_complete_stale_task_blocked_by_dispute() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+
+    test_env.env.ledger().set_timestamp(1000);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    // Well past the stale threshold, but the dispute must win.
+    test_env.env.ledger().set_timestamp(1000 + 1801);
+    assert_eq!(
+        test_env.client.get_task_status(&task_id),
+        Some(TaskStatus::Disputed)
+    );
+
+    let result = test_env.client.try_force_complete_stale_task(&task_id);
+    assert!(result == Err(Ok(VaultError::TaskDisputed)));
+
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.disputed);
+    assert!(!task.completed);
+}
+
+#[test]
+fn test_dispute_interaction_with_pause() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    test_env.client.pause(&test_env.admin);
+
+    // A user can still raise a dispute while paused (protection stays open).
+    test_env.client.raise_dispute(&user, &task_id);
+    assert!(test_env.client.get_task(&task_id).unwrap().disputed);
+
+    // But the resolver cannot move funds while paused.
+    let result = test_env
+        .client
+        .try_resolve_dispute(&resolver, &task_id, &300, &0);
+    assert!(result == Err(Ok(VaultError::ContractPaused)));
+
+    // After unpausing, resolution proceeds.
+    test_env.client.unpause(&test_env.admin);
+    test_env
+        .client
+        .resolve_dispute(&resolver, &task_id, &300, &0);
+    let task = test_env.client.get_task(&task_id).unwrap();
+    assert!(task.completed);
+}
+
+#[test]
+fn test_dispute_events_emitted() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, _orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    // raise_dispute emits exactly one event: DisputeRaisedEvent.
+    test_env.client.raise_dispute(&user, &task_id);
+    let expected_raise: soroban_sdk::Vec<(Address, soroban_sdk::Vec<Val>, Val)> = soroban_sdk::vec![
+        &test_env.env,
+        (
+            test_env.contract_id.clone(),
+            soroban_sdk::vec![
+                &test_env.env,
+                Symbol::new(&test_env.env, "dispute_raised_event").into_val(&test_env.env),
+                user.clone().into_val(&test_env.env),
+                task_id.into_val(&test_env.env),
+            ],
+            soroban_sdk::Map::<Val, Val>::new(&test_env.env).into_val(&test_env.env),
+        ),
+    ];
+    assert_eq!(
+        test_env
+            .env
+            .events()
+            .all()
+            .filter_by_contract(&test_env.contract_id),
+        expected_raise
+    );
+
+    // resolve_dispute emits exactly one event: DisputeResolvedEvent, carrying
+    // the refund/payout split in the data payload.
+    test_env
+        .client
+        .resolve_dispute(&resolver, &task_id, &80, &220);
+    let expected_resolve: soroban_sdk::Vec<(Address, soroban_sdk::Vec<Val>, Val)> = soroban_sdk::vec![
+        &test_env.env,
+        (
+            test_env.contract_id.clone(),
+            soroban_sdk::vec![
+                &test_env.env,
+                Symbol::new(&test_env.env, "dispute_resolved_event").into_val(&test_env.env),
+                resolver.clone().into_val(&test_env.env),
+                task_id.into_val(&test_env.env),
+            ],
+            soroban_sdk::map![
+                &test_env.env,
+                (Symbol::new(&test_env.env, "refund_to_user"), 80i128),
+                (
+                    Symbol::new(&test_env.env, "payout_to_orchestrator"),
+                    220i128
+                ),
+            ]
+            .into_val(&test_env.env),
+        ),
+    ];
+    assert_eq!(
+        test_env
+            .env
+            .events()
+            .all()
+            .filter_by_contract(&test_env.contract_id),
+        expected_resolve
+    );
+}
+
+#[test]
+fn test_resolve_dispute_full_payout_to_orchestrator() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    test_env.client.raise_dispute(&user, &task_id);
+
+    // Full remaining locked amount goes to the orchestrator, nothing to the user.
+    test_env
+        .client
+        .resolve_dispute(&resolver, &task_id, &0, &300);
+
+    assert_eq!(test_env.token_client.balance(&user), 500); // 1000 - 500 deposit, no refund
+    assert_eq!(test_env.token_client.balance(&orchestrator), 300);
+    assert_eq!(test_env.token_client.balance(&test_env.contract_id), 200);
+
+    let account = test_env
+        .client
+        .get_account(&user, &test_env.usdc_sac)
+        .unwrap();
+    assert_eq!(account.locked, 0);
+    assert_eq!(account.balance, 200);
+    assert_eq!(account.total_spent, 300);
+    assert_eq!(account.active_tasks_count, 0);
+}
+
+#[test]
+fn test_dispute_resolution_does_not_claw_back_spent() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+    let resolver = Address::generate(&test_env.env);
+    let (user, orchestrator, task_id) = setup_dispute_task(&test_env, resolver.clone());
+
+    // 200 already released; remaining locked = 100.
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &200);
+    test_env.client.raise_dispute(&user, &task_id);
+
+    // Resolution only touches the still-locked 100; the released 200 stays out.
+    test_env
+        .client
+        .resolve_dispute(&resolver, &task_id, &100, &0);
+
+    assert_eq!(test_env.token_client.balance(&orchestrator), 200);
+    assert_eq!(test_env.token_client.balance(&test_env.contract_id), 200); // 500 - 200 - 100
+
+    let account = test_env
+        .client
+        .get_account(&user, &test_env.usdc_sac)
+        .unwrap();
+    assert_eq!(account.locked, 0);
+    assert_eq!(account.balance, 200); // 500 - plan_cost(300)
+    assert_eq!(account.total_spent, 200); // only the released amount is spending
 }
