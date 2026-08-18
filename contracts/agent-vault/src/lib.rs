@@ -111,6 +111,24 @@ pub struct UpdateAdminEvent {
     pub new_admin: Address,
 }
 
+#[contractevent]
+pub struct DisputeRaisedEvent {
+    #[topic]
+    pub user: Address,
+    #[topic]
+    pub task_id: u64,
+}
+
+#[contractevent]
+pub struct DisputeResolvedEvent {
+    #[topic]
+    pub resolver: Address,
+    #[topic]
+    pub task_id: u64,
+    pub refund_to_user: i128,
+    pub payout_to_orchestrator: i128,
+}
+
 #[contracterror]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VaultError {
@@ -132,6 +150,11 @@ pub enum VaultError {
     NotYourTask = 16,
     NotYourOrchestrator = 17,
     TooManyActiveTasks = 18,
+    TaskDisputed = 19,
+    NotDisputeResolver = 20,
+    DisputeSplitMismatch = 21,
+    DisputeResolverNotSet = 22,
+    TaskNotDisputed = 23,
 }
 
 // Storage keys
@@ -165,6 +188,8 @@ pub enum DataKey {
     StaleTaskThreshold,
     /// Configurable cap on how many active tasks a single user may hold at once.
     MaxActiveTasks,
+    /// The dedicated resolver authorized to settle raised disputes.
+    DisputeResolver,
 }
 
 // Data structs
@@ -237,6 +262,10 @@ pub struct TaskInfo {
     pub spent: i128,
     /// Whether this task has been finalized (completed, cancelled, or force-completed).
     pub completed: bool,
+    /// Whether the user has raised a dispute that freezes this task pending
+    /// resolution by the configured `dispute_resolver`. A resolved dispute
+    /// leaves this flag set as an audit record; the task is then `completed`.
+    pub disputed: bool,
     /// Ledger timestamp when this task was created.
     pub created_at: u64,
 }
@@ -247,6 +276,7 @@ pub struct TaskInfo {
 pub enum TaskStatus {
     Active,
     Stale,
+    Disputed,
     Completed,
 }
 
@@ -277,7 +307,7 @@ const INSTANCE_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 /// deployment before assuming a given function or storage layout
 /// exists, especially important on Soroban where the same address
 /// can be upgraded in place.
-const CONTRACT_VERSION: u32 = 3;
+const CONTRACT_VERSION: u32 = 4;
 
 // Contract
 
@@ -711,6 +741,7 @@ impl AgentVault {
             plan_cost,
             spent: 0,
             completed: false,
+            disputed: false,
             created_at: env.ledger().timestamp(),
         };
         let task_key = DataKey::Task(counter);
@@ -777,6 +808,9 @@ impl AgentVault {
         if task.completed {
             return Err(VaultError::TaskAlreadyCompleted);
         }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
         if task.orchestrator != orchestrator {
             return Err(VaultError::NotYourOrchestrator);
         }
@@ -818,11 +852,13 @@ impl AgentVault {
     /// Orchestrator marks task complete.
     pub fn complete_task(env: Env, orchestrator: Address, task_id: u64) -> Result<(), VaultError> {
         orchestrator.require_auth();
-        Self::finalize_task(&env, task_id, Some(&orchestrator))?;
+        Self::require_task_not_disputed(&env, task_id)?;
+        Self::finalize_task(&env, task_id, Some(&orchestrator), None)?;
         Ok(())
     }
 
-    /// User cancels their own task at any time.
+    /// User cancels their own task at any time. Cancellation is blocked on a
+    /// disputed task — only the dispute resolver can end one.
     pub fn cancel_task(env: Env, user: Address, task_id: u64) -> Result<(), VaultError> {
         user.require_auth();
         let task_key = DataKey::Task(task_id);
@@ -835,11 +871,16 @@ impl AgentVault {
         if task.user != user {
             return Err(VaultError::NotYourTask);
         }
-        Self::finalize_task(&env, task_id, None)?;
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+        Self::finalize_task(&env, task_id, None, None)?;
         Ok(())
     }
 
     /// Safety escape hatch: anyone can finalize a task stuck for >30 minutes.
+    /// An open dispute is never bypassed — only the resolver can end a
+    /// disputed task.
     pub fn force_complete_stale_task(env: Env, task_id: u64) -> Result<(), VaultError> {
         let task_key = DataKey::Task(task_id);
         let task: TaskInfo = env
@@ -851,16 +892,163 @@ impl AgentVault {
         if task.completed {
             return Err(VaultError::TaskAlreadyCompleted);
         }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
 
         if !Self::is_task_stale(&env, &task) {
             return Err(VaultError::TaskNotStale);
         }
 
-        Self::finalize_task(&env, task_id, None)?;
+        Self::finalize_task(&env, task_id, None, None)?;
         Ok(())
     }
 
-    // Internal helpers
+    // Dispute & arbitration
+
+    /// Admin sets the dedicated `dispute_resolver` role. Only this address may
+    /// settle a raised dispute. May be updated at any time; disputes raised
+    /// under a previous resolver are settled by whichever resolver is set when
+    /// `resolve_dispute` is called.
+    pub fn set_dispute_resolver(
+        env: Env,
+        admin: Address,
+        resolver: Address,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        if admin != stored_admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeResolver, &resolver);
+        Self::extend_instance_ttl(&env);
+        log!(&env, "Dispute resolver set to: {}", resolver);
+        Ok(())
+    }
+
+    /// Returns the current dispute resolver, if one is configured.
+    pub fn get_dispute_resolver(env: Env) -> Option<Address> {
+        let result = env.storage().instance().get(&DataKey::DisputeResolver);
+        Self::extend_instance_ttl(&env);
+        result
+    }
+
+    /// The task's user raises a dispute on an active task. This freezes all
+    /// further releases and completion until a configured dispute resolver
+    /// settles it via `resolve_dispute`. Deliberately not gated on the pause
+    /// flag so a user can always lock in a complaint while the contract is
+    /// paused.
+    pub fn raise_dispute(env: Env, user: Address, task_id: u64) -> Result<(), VaultError> {
+        user.require_auth();
+        let task_key = DataKey::Task(task_id);
+        let mut task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(&env, &task_key);
+        if task.completed {
+            return Err(VaultError::TaskAlreadyCompleted);
+        }
+        if task.user != user {
+            return Err(VaultError::NotYourTask);
+        }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+
+        task.disputed = true;
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        DisputeRaisedEvent {
+            user: user.clone(),
+            task_id,
+        }
+        .publish(&env);
+        log!(&env, "raise_dispute task={} user={}", task_id, user);
+        Ok(())
+    }
+
+    /// The dispute resolver settles a disputed task by splitting the still-
+    /// locked remainder (`plan_cost - spent`) between the user (`refund_to_user`,
+    /// sent back to the user's wallet) and the orchestrator
+    /// (`payout_to_orchestrator`). Already-released `spent` is never clawed back
+    /// — that is a deliberate design boundary. The task is finalized with the
+    /// same accounting as `complete_task`/`cancel_task`, so `locked`, `balance`,
+    /// `total_spent`, and `active_tasks_count` stay consistent.
+    pub fn resolve_dispute(
+        env: Env,
+        resolver: Address,
+        task_id: u64,
+        refund_to_user: i128,
+        payout_to_orchestrator: i128,
+    ) -> Result<(), VaultError> {
+        resolver.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let task_key = DataKey::Task(task_id);
+        let task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(&env, &task_key);
+        if task.completed {
+            return Err(VaultError::TaskAlreadyCompleted);
+        }
+        if !task.disputed {
+            return Err(VaultError::TaskNotDisputed);
+        }
+
+        let stored_resolver: Option<Address> =
+            env.storage().instance().get(&DataKey::DisputeResolver);
+        Self::extend_instance_ttl(&env);
+        match stored_resolver {
+            None => return Err(VaultError::DisputeResolverNotSet),
+            Some(r) if r != resolver => return Err(VaultError::NotDisputeResolver),
+            Some(_) => {}
+        }
+
+        if refund_to_user < 0 || payout_to_orchestrator < 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let remaining_locked = task.plan_cost - task.spent;
+        if refund_to_user + payout_to_orchestrator != remaining_locked {
+            return Err(VaultError::DisputeSplitMismatch);
+        }
+
+        Self::finalize_task(
+            &env,
+            task_id,
+            None,
+            Some((refund_to_user, payout_to_orchestrator)),
+        )?;
+
+        DisputeResolvedEvent {
+            resolver,
+            task_id,
+            refund_to_user,
+            payout_to_orchestrator,
+        }
+        .publish(&env);
+        log!(
+            &env,
+            "resolve_dispute task={} refund_to_user={} payout_to_orchestrator={}",
+            task_id,
+            refund_to_user,
+            payout_to_orchestrator
+        );
+        Ok(())
+    }
 
     /// Uses the live threshold so status queries and force completion cannot drift.
     fn is_task_stale(env: &Env, task: &TaskInfo) -> bool {
@@ -882,16 +1070,41 @@ impl AgentVault {
         Ok(())
     }
 
-    /// Shared finalization logic for `complete_task`, `cancel_task`, and
-    /// `force_complete_stale_task`. Unlocks `plan_cost` from the user's balance,
-    /// deducts only the amount actually spent, and marks the task as completed.
+    /// Rejects operation on a task that has an open dispute. Returns
+    /// `TaskNotFound` if the task does not exist.
+    fn require_task_not_disputed(env: &Env, task_id: u64) -> Result<(), VaultError> {
+        let task_key = DataKey::Task(task_id);
+        let task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(env, &task_key);
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+        Ok(())
+    }
+
+    /// Shared finalization logic for `complete_task`, `cancel_task`,
+    /// `force_complete_stale_task`, and `resolve_dispute`. Unlocks `plan_cost`
+    /// from the user's balance, deducts only the amount actually spent, and
+    /// marks the task as completed.
     ///
     /// If `expected_orchestrator` is `Some`, the caller must match the task's
     /// registered orchestrator (used by `complete_task`).
+    ///
+    /// If `dispute_split` is `Some((refund_to_user, payout_to_orchestrator))`,
+    /// the task was resolved through a dispute: the refund is sent back to the
+    /// user's wallet, the payout to the orchestrator's, and the entire
+    /// `plan_cost` is removed from the user's locked balance (spent already
+    /// left the vault, the refund and payout are transferred now). The regular
+    /// paths instead leave the unspent remainder as available balance.
     fn finalize_task(
         env: &Env,
         task_id: u64,
         expected_orchestrator: Option<&Address>,
+        dispute_split: Option<(i128, i128)>,
     ) -> Result<(), VaultError> {
         let task_key = DataKey::Task(task_id);
         let mut task: TaskInfo = env
@@ -907,6 +1120,20 @@ impl AgentVault {
         if let Some(orch) = expected_orchestrator {
             if task.orchestrator != *orch {
                 return Err(VaultError::NotYourOrchestrator);
+            }
+        }
+
+        if let Some((refund_to_user, payout_to_orchestrator)) = dispute_split {
+            let token_client = token::Client::new(env, &task.asset);
+            if refund_to_user > 0 {
+                token_client.transfer(&env.current_contract_address(), &task.user, &refund_to_user);
+            }
+            if payout_to_orchestrator > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &task.orchestrator,
+                    &payout_to_orchestrator,
+                );
             }
         }
 
@@ -927,8 +1154,16 @@ impl AgentVault {
         Self::extend_persistent_ttl(env, &asset_key);
 
         asset_account.locked -= task.plan_cost;
-        asset_account.balance -= task.spent;
-        asset_account.total_spent += task.spent;
+        match dispute_split {
+            Some((_, payout_to_orchestrator)) => {
+                asset_account.balance -= task.plan_cost;
+                asset_account.total_spent += task.spent + payout_to_orchestrator;
+            }
+            None => {
+                asset_account.balance -= task.spent;
+                asset_account.total_spent += task.spent;
+            }
+        }
         config.active_tasks_count -= 1;
 
         env.storage().persistent().set(&config_key, &config);
@@ -940,22 +1175,24 @@ impl AgentVault {
         env.storage().persistent().set(&task_key, &task);
         Self::extend_persistent_ttl(env, &task_key);
 
-        let refund = task.plan_cost - task.spent;
-        TaskDoneEvent {
-            user: task.user.clone(),
-            task_id,
-            asset: task.asset.clone(),
-            spent: task.spent,
-            refund,
+        if dispute_split.is_none() {
+            let refund = task.plan_cost - task.spent;
+            TaskDoneEvent {
+                user: task.user.clone(),
+                task_id,
+                asset: task.asset.clone(),
+                spent: task.spent,
+                refund,
+            }
+            .publish(env);
+            log!(
+                env,
+                "finalize_task id={} spent={} refund={}",
+                task_id,
+                task.spent,
+                refund
+            );
         }
-        .publish(env);
-        log!(
-            env,
-            "finalize_task id={} spent={} refund={}",
-            task_id,
-            task.spent,
-            refund
-        );
         Ok(())
     }
 
@@ -1183,6 +1420,8 @@ impl AgentVault {
 
         if task.completed {
             Some(TaskStatus::Completed)
+        } else if task.disputed {
+            Some(TaskStatus::Disputed)
         } else if Self::is_task_stale(&env, &task) {
             Some(TaskStatus::Stale)
         } else {
