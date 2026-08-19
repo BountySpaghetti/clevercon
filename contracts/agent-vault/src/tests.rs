@@ -677,7 +677,7 @@ fn test_release_payment_success() {
     let success =
         test_env
             .client
-            .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+            .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
     assert!(success);
 
     // Verify USDC transfers to orchestrator
@@ -692,7 +692,7 @@ fn test_release_payment_success() {
     let success2 =
         test_env
             .client
-            .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &200);
+            .release_payment(&orchestrator, &task_id, &2, &test_env.usdc_sac, &200);
     assert!(success2);
     assert_eq!(test_env.token_client.balance(&orchestrator), 300);
 
@@ -722,8 +722,173 @@ fn test_release_payment_exceeds_plan_cost_fails() {
     let result =
         test_env
             .client
-            .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &301);
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &301);
     assert!(result == Err(Ok(VaultError::ExceedsPlanCost)));
+}
+
+#[test]
+fn test_release_payment_replay_is_idempotent_success() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "ReplayOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    assert!(test_env.client.release_payment(
+        &orchestrator,
+        &task_id,
+        &42,
+        &test_env.usdc_sac,
+        &100
+    ));
+    assert!(test_env.client.release_payment(
+        &orchestrator,
+        &task_id,
+        &42,
+        &test_env.usdc_sac,
+        &100
+    ));
+
+    assert_eq!(test_env.token_client.balance(&orchestrator), 100);
+    assert_eq!(test_env.token_client.balance(&test_env.contract_id), 400);
+    assert_eq!(test_env.client.get_task(&task_id).unwrap().spent, 100);
+}
+
+#[test]
+fn test_release_payment_same_step_different_amount_conflicts() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "ConflictOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &7, &test_env.usdc_sac, &100);
+
+    let result =
+        test_env
+            .client
+            .try_release_payment(&orchestrator, &task_id, &7, &test_env.usdc_sac, &101);
+
+    assert!(result == Err(Ok(VaultError::ReleaseConflict)));
+    assert_eq!(test_env.token_client.balance(&orchestrator), 100);
+    assert_eq!(test_env.client.get_task(&task_id).unwrap().spent, 100);
+}
+
+#[test]
+fn test_release_payment_distinct_steps_same_amount_accumulate() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "DistinctStepsOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &2, &test_env.usdc_sac, &100);
+
+    assert_eq!(test_env.token_client.balance(&orchestrator), 200);
+    assert_eq!(test_env.client.get_task(&task_id).unwrap().spent, 200);
+}
+
+#[test]
+fn test_release_payment_replay_after_completion_rejects_cleanly() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "CompletedReplayOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
+    test_env.client.complete_task(&orchestrator, &task_id);
+
+    let result =
+        test_env
+            .client
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
+
+    assert!(result == Err(Ok(VaultError::TaskAlreadyCompleted)));
+    assert_eq!(test_env.token_client.balance(&orchestrator), 100);
+}
+
+#[test]
+fn test_release_payment_replay_after_force_complete_rejects_cleanly() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    test_env.env.ledger().set_timestamp(1000);
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "StaleReplayOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
+    test_env.env.ledger().set_timestamp(2801);
+    test_env.client.force_complete_stale_task(&task_id);
+
+    let result =
+        test_env
+            .client
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
+
+    assert!(result == Err(Ok(VaultError::TaskAlreadyCompleted)));
+    assert_eq!(test_env.token_client.balance(&orchestrator), 100);
 }
 
 #[test]
@@ -747,14 +912,14 @@ fn test_release_payment_on_completed_task_fails() {
 
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
     test_env.client.complete_task(&orchestrator, &task_id);
 
     // Try releasing on completed task
     let result =
         test_env
             .client
-            .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &50);
+            .try_release_payment(&orchestrator, &task_id, &2, &test_env.usdc_sac, &50);
     assert!(result == Err(Ok(VaultError::TaskAlreadyCompleted)));
 }
 
@@ -782,6 +947,7 @@ fn test_release_payment_unauthorized_orchestrator_fails() {
     let result = test_env.client.try_release_payment(
         &wrong_orchestrator,
         &task_id,
+        &1,
         &test_env.usdc_sac,
         &100,
     );
@@ -811,7 +977,7 @@ fn test_release_payment_zero_amount_fails() {
     let result =
         test_env
             .client
-            .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &0);
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &0);
     assert!(result == Err(Ok(VaultError::InvalidAmount)));
 }
 
@@ -838,7 +1004,7 @@ fn test_release_payment_negative_amount_fails() {
     let result =
         test_env
             .client
-            .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &-50);
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &-50);
     assert!(result == Err(Ok(VaultError::InvalidAmount)));
 }
 
@@ -865,7 +1031,7 @@ fn test_complete_task_success() {
 
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
 
     // Complete the task
     test_env.client.complete_task(&orchestrator, &task_id);
@@ -914,10 +1080,10 @@ fn test_two_concurrent_tasks_complete_independently() {
 
     test_env
         .client
-        .release_payment(&orchestrator, &first_task_id, &test_env.usdc_sac, &60);
+        .release_payment(&orchestrator, &first_task_id, &1, &test_env.usdc_sac, &60);
     test_env
         .client
-        .release_payment(&orchestrator, &second_task_id, &test_env.usdc_sac, &90);
+        .release_payment(&orchestrator, &second_task_id, &1, &test_env.usdc_sac, &90);
 
     test_env.client.complete_task(&orchestrator, &first_task_id);
 
@@ -1005,7 +1171,7 @@ fn test_cancel_task_success() {
 
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
 
     // User cancels their own task
     test_env.client.cancel_task(&user, &task_id);
@@ -1397,6 +1563,62 @@ fn persistent_ttl(test_env: &TestEnv, key: &DataKey) -> u32 {
     })
 }
 
+fn persistent_has(test_env: &TestEnv, key: &DataKey) -> bool {
+    test_env.env.as_contract(&test_env.contract_id, || {
+        test_env.env.storage().persistent().has(key)
+    })
+}
+
+#[test]
+fn test_step_release_records_refresh_ttl_and_are_removed_on_finalize() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "TtlOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    test_env
+        .client
+        .release_payment(&orchestrator, &task_id, &99, &test_env.usdc_sac, &100);
+
+    let record_key = DataKey::TaskStepRelease(task_id, 99);
+    let ids_key = DataKey::TaskStepIds(task_id);
+    assert!(persistent_has(&test_env, &record_key));
+    assert!(persistent_has(&test_env, &ids_key));
+
+    let start = test_env.env.ledger().sequence();
+    test_env
+        .env
+        .ledger()
+        .set_sequence_number(start + TTL_DECAY_STEP);
+    assert!(persistent_ttl(&test_env, &record_key) < TTL_EXTEND_THRESHOLD);
+    assert!(persistent_ttl(&test_env, &ids_key) < TTL_EXTEND_THRESHOLD);
+
+    assert!(test_env.client.release_payment(
+        &orchestrator,
+        &task_id,
+        &99,
+        &test_env.usdc_sac,
+        &100
+    ));
+    assert!(persistent_ttl(&test_env, &record_key) > TTL_EXTEND_THRESHOLD);
+    assert!(persistent_ttl(&test_env, &ids_key) > TTL_EXTEND_THRESHOLD);
+
+    test_env.client.complete_task(&orchestrator, &task_id);
+    assert!(!persistent_has(&test_env, &record_key));
+    assert!(!persistent_has(&test_env, &ids_key));
+}
+
 #[test]
 fn test_is_supported_asset_refreshes_index_ttl() {
     // Direction 1: per-asset lookups (as deposit/create_task perform) must keep
@@ -1554,7 +1776,7 @@ fn test_multi_asset_deposit_withdraw_task_flow() {
     // Release payment in XLM
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &xlm_sac, &200);
+        .release_payment(&orchestrator, &task_id, &1, &xlm_sac, &200);
 
     assert_eq!(xlm_client.balance(&orchestrator), 200);
     assert_eq!(test_env.token_client.balance(&orchestrator), 0); // No USDC transferred
@@ -1676,7 +1898,7 @@ fn test_release_payment_reverts_when_paused() {
     let result =
         test_env
             .client
-            .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+            .try_release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
     assert!(result == Err(Ok(VaultError::ContractPaused)));
 }
 
@@ -2289,6 +2511,7 @@ mod invariant_tests {
         user_idx: usize,
         orchestrator_idx: usize,
         asset_idx: usize,
+        next_step_id: u64,
     }
 
     struct InvariantTestHarness {
@@ -2491,6 +2714,7 @@ mod invariant_tests {
                     user_idx: orch_idx,
                     orchestrator_idx: orch_idx,
                     asset_idx,
+                    next_step_id: 1,
                 });
             }
         }
@@ -2499,15 +2723,17 @@ mod invariant_tests {
             if task_idx >= self.active_tasks.len() {
                 return;
             }
-            let task_state = &self.active_tasks[task_idx];
+            let task_state = &mut self.active_tasks[task_idx];
             let task_id = task_state.id;
+            let step_id = task_state.next_step_id;
+            task_state.next_step_id += 1;
             let orchestrator = &self.orchestrators[task_state.orchestrator_idx];
             let assets = [self.usdc_sac.clone(), self.xlm_sac.clone()];
             let asset = &assets[task_state.asset_idx];
 
-            let _ = self
-                .client
-                .try_release_payment(orchestrator, &task_id, asset, &amount);
+            let _ =
+                self.client
+                    .try_release_payment(orchestrator, &task_id, &step_id, asset, &amount);
         }
 
         fn complete_task(&mut self, task_idx: usize, seed: u64, step_idx: usize) {
@@ -2716,7 +2942,7 @@ mod invariant_tests {
         // Release step payment of 100
         test_env
             .client
-            .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+            .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
 
         // Token balance drops by 100
         assert_eq!(test_env.client.token_balance(&test_env.usdc_sac), 400);
@@ -2734,7 +2960,7 @@ mod invariant_tests {
 #[test]
 fn test_version_returns_contract_version() {
     let test_env = setup_test();
-    assert_eq!(test_env.client.version(), 4);
+    assert_eq!(test_env.client.version(), 5);
 }
 
 // 13. Dispute & Arbitration Tests
@@ -2808,7 +3034,7 @@ fn test_dispute_happy_path_split() {
     // Orchestrator already released 100 of the 300 plan cost.
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &100);
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &100);
 
     // User raises the dispute: it freezes releases and completion.
     test_env.client.raise_dispute(&user, &task_id);
@@ -2820,9 +3046,10 @@ fn test_dispute_happy_path_split() {
         Some(TaskStatus::Disputed)
     );
 
-    let rel = test_env
-        .client
-        .try_release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &50);
+    let rel =
+        test_env
+            .client
+            .try_release_payment(&orchestrator, &task_id, &2, &test_env.usdc_sac, &50);
     assert!(rel == Err(Ok(VaultError::TaskDisputed)));
     let cmp = test_env.client.try_complete_task(&orchestrator, &task_id);
     assert!(cmp == Err(Ok(VaultError::TaskDisputed)));
@@ -3169,7 +3396,7 @@ fn test_dispute_resolution_does_not_claw_back_spent() {
     // 200 already released; remaining locked = 100.
     test_env
         .client
-        .release_payment(&orchestrator, &task_id, &test_env.usdc_sac, &200);
+        .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &200);
     test_env.client.raise_dispute(&user, &task_id);
 
     // Resolution only touches the still-locked 100; the released 200 stays out.
