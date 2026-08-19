@@ -2,159 +2,98 @@
 
 ## Vision
 
-CleverCon is a protocol on Stellar for **private, policy-bounded delegation of
-money to AI agents**. A user locks funds in a non-custodial Soroban vault under
-a spending policy that stays private, and an orchestration layer hires services
-by capability, gets them through the vault, and settles payment in USDC per task
-step — where every release is bound by the user's policy.
+CleverCon is a way to delegate a budget to AI agents on Stellar without giving
+up custody. Funds sit in a non-custodial Soroban vault, an orchestrator hires
+agents by capability, and payment settles in USDC per task step. The vault caps
+what can be spent and refunds the rest.
 
-Two properties define the project and separate it from custodial, off-chain
-agent wallets:
+The current agent network is AI-focused, but the protocol is not tied to AI. Any
+HTTP service with a Stellar wallet and x402 or MPP support can register.
 
-- **Non-custodial.** Funds live in CleverVault, a contract the operator cannot
-  drain. Settlement is on-chain with verifiable hashes.
-- **Private and provably bounded.** The user's spending policy is committed
-  on-chain as a hash and enforced by zero-knowledge proof — the agent, the
-  chain, and the operator never see the rule, and no payment outside it can
-  settle.
-
-The current agent network is AI-focused, but the protocol is service-agnostic:
-any HTTP service with a Stellar wallet and x402 or MPP support can register.
-Future participants may include data oracles, computation services, paid APIs,
-verification services, and human-in-the-loop workers.
-
-CleverCon is scoped to orchestration, policy enforcement, and marketplace
-mechanics. Identity and authorization for agents (who may act on whose behalf)
-is the concern of complementary protocols such as REAPP; CleverCon integrates
-with that layer rather than re-implementing it.
+The direction the project is heading is private spending policies: the user sets
+a spending rule (a cap, an allowlist of payees, a per-payment limit), the vault
+enforces it on every release, and the rule itself stays private. This turns
+"the operator cannot overspend the budget" into "the delegate cannot spend
+outside the rule you set, and the rule is not public."
 
 ## Current status
 
-The following is live and working on Stellar Testnet today:
+Live on Stellar Testnet today:
 
 - **CleverVault** Soroban contract: deposits, per-task budget locking, per-step
-  payment release capped on-chain, refunds of unused budget, multi-asset
-  support, stale-task recovery, and pause/admin controls, backed by a 100+ case
-  Rust test suite.
-- **Orchestrator** service: LLM-driven task planning (currently Claude Sonnet),
-  feasibility checking, agent selection/scoring, and a dependency-aware
-  execution engine.
-- **Off-chain agent registry** (Express + JSON file) with self-registration,
-  capability search, and an Elo-style reputation score updated after every job.
+  release capped on-chain, refunds of unused budget, multi-asset support,
+  stale-task recovery, and pause/admin controls, with a 100+ case test suite.
+- **Orchestrator**: task planning (Claude Sonnet), feasibility checks, agent
+  selection and scoring, and a dependency-aware execution engine.
+- **Agent registry**: self-registration, capability search, and a reputation
+  score updated after every job.
 - **Five specialist agents** (`stellar-oracle`, `web-intel`, `web-intel-v2`,
-  `analysis`, `reporter`) paid via x402 or MPP.
-- **React dashboard** for connecting a wallet, funding the vault, submitting
-  tasks, approving plans, and viewing vault/task history.
-- One-command local dev (`scripts/start.sh`) and a 7-service Render deployment
-  blueprint (`render.yaml`).
+  `analysis`, `reporter`) paid over x402 or MPP.
+- **React dashboard** for connecting a wallet, funding the vault, submitting and
+  approving tasks, and viewing history.
+- One-command local dev (`scripts/start.sh`) and a 7-service Render blueprint.
 
-Separately, the **zero-knowledge policy vault** that Phase 1 integrates is
-already deployed and demonstrated on testnet as
-[CipherMit](https://github.com/Bosun-Josh121/ciphermit) — a Soroban vault that
-releases funds only against a Groth16 proof (RISC Zero zkVM) of compliance with
-a private policy, with verified on-chain transactions for allowance, allowlist,
-and delegation. The hard cryptographic work is proven; the roadmap brings it
-into CleverVault.
+Known gaps: the vault does not yet enforce spending policies, the registry and
+agent scaffolding are not packaged for reuse, the planner is hardcoded to
+Anthropic, and orchestrator keys are stored in plaintext on disk.
 
-What's missing for production: the vault does not yet enforce private policies
-(that is Phase 1), the registry and agent scaffolding are not packaged as
-reusable components, the orchestrator's LLM provider is hardcoded to Anthropic,
-and orchestrator keys are stored in plaintext on disk.
+## Private spending policies
 
-## Phase 1 — Private policy enforcement (zero-knowledge CleverVault)
+The headline next step. A user commits a spending rule when they lock funds, and
+the vault checks every release against it.
 
-The defining phase. Integrate the proven CipherMit ZK vault into CleverVault so
-that funds are locked under a private, provably enforced spending policy.
+- Support four rule types: a rolling spend cap over a time window, an allowlist
+  of approved payees, per-delegate sub-budgets, and a deny-list with thresholds.
+- Keep the rule private by committing it as a hash and proving compliance with a
+  zero-knowledge proof rather than storing the rule in the clear.
+- Verify the proof on-chain before funds move, binding it to the specific payee
+  and amount, with replay protection.
+- Prove compliance when the budget is locked, then allow fast per-step releases
+  within the proven envelope, so per-call payments stay instant.
 
-- Commit a user's spending policy on-chain as a hash at deposit/lock time, so
-  the rule never appears on-chain in the clear.
-- Support the four policy types: **allowance** (rolling, time-windowed caps),
-  **allowlist** (spend only to approved agents via Merkle membership proofs),
-  **delegation** (private per-orchestrator sub-budgets), and **compliance**
-  (deny-list / threshold enforcement).
-- Gate `release_payment` on a Groth16 proof, verified on-chain through a Soroban
-  verifier router, binding the proof to the specific recipient, amount, and
-  owner (with nullifiers to prevent replay and image-ID pinning to fix the guest
-  program identity).
-- **Prove at authorization, not per micropayment.** Proving is generated
-  server-side and is not free; the design proves policy compliance for a task's
-  plan when the budget is locked, then allows fast per-step releases *within*
-  the proven envelope. This keeps x402/MPP micropayments instant while the
-  boundary stays cryptographically enforced.
-- Wire the compliance policy type (deny-list + threshold), the one policy still
-  in development in the standalone vault, through end to end.
+The zero-knowledge engine for this already runs on testnet as a separate
+project, [CipherMit](https://github.com/Bosun-Josh121/ciphermit). Bringing it
+into CleverVault is the main build.
 
-## Phase 2 — Harden CleverVault
+## Harden CleverVault
 
-- Extend the existing contract test suite to cover the ZK verification path,
-  stale-task recovery, and authorization checks end to end.
-- Add storage TTL / `extend_ttl` management for persistent ledger entries.
-- Expand multi-asset support beyond the current whitelisted-SAC model as needed.
-- Expand inline documentation (parameters, return values, panics, authorization
-  and proof requirements) to make the contract review-ready.
-- Known hardening gaps: encrypt orchestrator secret keys at rest; add
-  file-locking and atomic writes to the JSON-backed stores.
-- **Threat model + monitoring plan** for the full system, including the trusted
-  prover, as a first-class deliverable.
+- Extend the test suite to cover the policy-verification path end to end.
+- Add storage TTL management for persistent entries.
+- Encrypt orchestrator secret keys at rest and add file-locking to the
+  JSON-backed stores.
+- Expand inline documentation so the contract is review-ready.
 
-## Phase 3 — On-chain Agent Registry contract
+## On-chain agent registry
 
-- Design a Soroban contract that mirrors `packages/registry`'s data model
-  (`AgentManifest`, reputation fields) for on-chain storage.
-- Migrate agent registration, discovery, and feedback-driven reputation updates
-  to read from and write to the contract, with the existing Express registry as
-  a caching layer.
-- Define the migration path for existing off-chain registry data.
+- A Soroban contract mirroring the registry's data model, so manifests and
+  reputation are verifiable on-chain rather than living in one service's JSON
+  file.
+- Migrate registration, discovery, and feedback to the contract, with the
+  Express registry as a cache.
 
-## Phase 4 — Stellar MCP server + Specialist Agent SDK
+## Stellar MCP server and agent SDK
 
-- Build a Stellar MCP server that exposes agent discovery, vault balance/task
-  views, and payment helpers as MCP tools, so any MCP-compatible client can
-  find and pay CleverCon agents under a policy.
-- Extract `@clevercon/agent-sdk`: shared scaffolding for specialist agents —
-  x402/MPP server setup, manifest/health endpoints, self-registration with
-  retry, and reputation feedback helpers — based on the patterns duplicated
-  across the five existing agents.
-- Port the existing agents to the SDK as the reference implementation.
+- An MCP server exposing agent discovery, vault views, and payment helpers as
+  MCP tools, so any MCP-compatible client can find and pay CleverCon agents.
+- `@clevercon/agent-sdk`: shared scaffolding for specialist agents (x402/MPP
+  setup, manifest and health endpoints, self-registration, feedback helpers),
+  extracted from the patterns duplicated across the five existing agents.
 
-## Phase 5 — Multi-provider + ecosystem
+## Multi-provider and ecosystem
 
-- Decouple the orchestrator from the Anthropic SDK behind a pluggable LLM
-  provider interface (Claude, GPT, Gemini, local models, and a mock provider
-  for development without API keys), configured via `LLM_PROVIDER`.
-- Apply the same abstraction to the registry's quality rating service
-  (currently hardcoded to Claude Haiku).
-- Add retry/backoff consistently across payment clients (MPP currently lacks
-  the retry logic that x402 has) and external data sources.
-- Add structured logging/correlation IDs across the orchestrator and agents.
-- Grow the specialist agent catalog with community-contributed agents built on
-  the Agent SDK.
+- Decouple the planner from the Anthropic SDK behind a provider interface
+  (Claude, GPT, Gemini, local models, and a mock for development), selected with
+  `LLM_PROVIDER`.
+- Add retry and backoff consistently across payment clients and data sources.
+- Add structured logging and correlation IDs across services.
 
-## Phase 6 — Audit + Mainnet
+## Audit and mainnet
 
-- Security review and audit of CleverVault (including the ZK verification path)
-  and the Agent Registry contract.
-- Decentralize proving: move from a single shared prover toward a
-  local/enclave prover so users need not trust a hosted prover.
-- Deploy CleverVault and the Agent Registry contract to Stellar mainnet.
-- Production deployment hardening: secrets management, monitoring, rate limiting
-  across the registry, orchestrator, and agents.
-- Mainnet USDC and multi-asset support.
-
-## Long-term
-
-- **Beyond AI agents:** onboard non-AI services (oracles, computation,
-  verification, human-in-the-loop) as first-class marketplace participants under
-  the same private-policy custody. The agent interface is already
-  service-agnostic; the work is SDK support and documentation.
-- **Multi-orchestrator support:** allow third parties to run their own
-  orchestrators against the shared registry, removing the single-operator
-  centralization point. Users choose which orchestrator to use based on track
-  record, fee, or features — and their policy binds all of them equally.
-- **Community-driven reputation:** move quality rating away from any single LLM
-  provider toward multi-provider consensus or user-driven ratings weighted by
-  on-chain history.
+- Security review of CleverVault, including the policy-verification path.
+- Move proving toward a local or enclave prover so users need not trust a hosted
+  prover.
+- Deploy to Stellar mainnet with mainnet USDC and multi-asset support.
+- Production hardening: secrets management, monitoring, and rate limiting.
 
 See the [issue tracker](https://github.com/clevercon-protocol/clevercon/issues)
-for current bounties, and [CONTRIBUTING.md](CONTRIBUTING.md) for how to get
-started.
+and [CONTRIBUTING.md](CONTRIBUTING.md) to get started.

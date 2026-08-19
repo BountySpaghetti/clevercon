@@ -24,7 +24,7 @@ clevercon/
 ## Setup
 
 1. Install Node.js 20 (see `.nvmrc`) and run `npm install` from the repo
-   root — this installs all workspace packages.
+   root, this installs all workspace packages.
 2. Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Most other
    variables are filled in by the scripts below.
 3. Generate Stellar testnet wallets:
@@ -35,7 +35,7 @@ clevercon/
 
    This creates `wallets.json` (gitignored) and **prints the secret keys to
    stdout**. Copy the printed `*_SECRET_KEY=S...` lines into your `.env` file
-   before continuing — the services refuse to start without them.
+   before continuing, the services refuse to start without them.
 
 4. Add USDC trustlines to every wallet:
 
@@ -70,7 +70,7 @@ clevercon/
    This writes `AGENT_VAULT_CONTRACT_ID` to `.env`. If unset, the
    orchestrator's vault client (`agent-vault-client.ts`) detects that the
    vault is inactive (`VAULT_ACTIVE = false`) and all vault calls become safe
-   no-ops — useful for working on non-vault code without a deployed contract.
+   no-ops, useful for working on non-vault code without a deployed contract.
 
 ## Running services
 
@@ -107,7 +107,7 @@ npx tsx scripts/bootstrap.ts --auto-approve
 ```
 
 Runs ~25 varied tasks through the orchestrator so agents accumulate
-reputation history — useful when working on the selector or dashboard.
+reputation history, useful when working on the selector or dashboard.
 
 ## Common tasks
 
@@ -121,7 +121,7 @@ npm test            # Vitest unit tests
 ```
 
 Build a single service with `npm run build:<name>` (e.g. `build:orchestrator`,
-`build:oracle`) — see `package.json` for the full list. Each maps to an
+`build:oracle`), see `package.json` for the full list. Each maps to an
 esbuild invocation that bundles the service into `packages/<pkg>/dist/`.
 
 ## Registry API endpoints
@@ -257,12 +257,12 @@ curl -s -X POST http://localhost:3000/api/tasks/preview \
 
 ### GET /metrics
 
-Operational counters for the orchestrator process — task throughput, step
+Operational counters for the orchestrator process, task throughput, step
 outcomes, USDC released, and step-latency percentiles. Intended for a status
 dashboard or an alerting rule; no authentication, no user address required.
 
 The response is **plain JSON** (not Prometheus text exposition). The shape is
-stable — fields may be added, but existing ones keep their names and meaning.
+stable, fields may be added, but existing ones keep their names and meaning.
 
 ```json
 {
@@ -281,15 +281,14 @@ Field notes:
 |---|---|
 | `tasks.total` | Tasks submitted, including those seeded from the activity log |
 | `tasks.active` | In flight **in this process** right now |
-| `tasks.interrupted` | Were in flight when a previous process exited — seeded at startup, never incremented at runtime |
+| `tasks.interrupted` | Were in flight when a previous process exited, seeded at startup, never incremented at runtime |
 | `steps.executed` | Step attempts that finished, successfully or not |
 | `steps.failed` | Subset of `executed` that failed |
 | `steps.timed_out` | Subset of `failed` whose error text reads as a timeout |
 | `usdc_released_total` | USDC released from the vault to the orchestrator wallet |
 | `step_duration_ms` | Percentiles over the most recent 1024 step attempts (fixed-size ring, so memory is bounded); `null` until the first step runs |
 
-Counters are per-process and dependency-free (`packages/orchestrator/src/metrics.ts`
-— no metrics library). On startup they are seeded from `data/activity-log.json`
+Counters are per-process and dependency-free (`packages/orchestrator/src/metrics.ts`, no metrics library). On startup they are seeded from `data/activity-log.json`
 and `data/task-results.json` so a redeploy doesn't zero the totals. Because
 activity events are only written for tasks that carry a `user_address`,
 anonymous tasks contribute to live counters but are not restored across a
@@ -311,16 +310,16 @@ Unit tests use [Vitest](https://vitest.dev/) and are colocated with the code
 they test as `*.test.ts`. Current coverage focuses on pure logic that's easy
 to verify in isolation:
 
-- `packages/registry/src/reputation.test.ts` — reputation score calculation
+- `packages/registry/src/reputation.test.ts`, reputation score calculation
   and rolling-average updates.
-- `packages/registry/src/search.test.ts` — capability matching.
-- `packages/orchestrator/src/selector.test.ts` — agent scoring/selection.
-- `packages/orchestrator/src/validator.test.ts` — execution plan validation.
-- `packages/orchestrator/src/server.preview.test.ts` — `/api/tasks/preview`
+- `packages/registry/src/search.test.ts`, capability matching.
+- `packages/orchestrator/src/selector.test.ts`, agent scoring/selection.
+- `packages/orchestrator/src/validator.test.ts`, execution plan validation.
+- `packages/orchestrator/src/server.preview.test.ts`, `/api/tasks/preview`
   endpoint (happy path, no-agents 503, infeasible 422).
-- `packages/orchestrator/src/metrics.test.ts` — counter transitions, timeout
+- `packages/orchestrator/src/metrics.test.ts`, counter transitions, timeout
   classification, percentile math, ring-buffer bounding, and startup seeding.
-- `packages/orchestrator/src/server.metrics.test.ts` — `/metrics` response shape.
+- `packages/orchestrator/src/server.metrics.test.ts`, `/metrics` response shape.
 
 Run the full suite with `npm test`, or scope to a package with
 `npm test -w packages/registry`.
@@ -339,16 +338,16 @@ cargo clippy -- -D warnings
 ESLint (TypeScript) and Prettier are configured at the repo root and apply to
 every workspace package except `packages/dashboard` (which has its own
 frontend tooling and is out of scope for backend hardening). Run
-`npm run lint` and `npm run format:check` before opening a PR — CI runs both.
+`npm run lint` and `npm run format:check` before opening a PR, CI runs both.
 
 ## CI overview
 
 Two workflows run on pull requests and pushes to `main`:
 
-- **`.github/workflows/ci.yml`** — a TypeScript job (`npm ci`, `typecheck`,
+- **`.github/workflows/ci.yml`**, a TypeScript job (`npm ci`, `typecheck`,
   `lint`, `format:check`, `build`, `test`) and a Rust job (`cargo fmt --check`,
   `cargo clippy`, `cargo test` for each contract).
-- **`.github/workflows/dependency-review.yml`** — flags newly introduced
+- **`.github/workflows/dependency-review.yml`**, flags newly introduced
   dependencies with known vulnerabilities on pull requests.
 
 ## Deployment
@@ -360,7 +359,7 @@ the 5 agents) as a Render Blueprint. To deploy:
 2. Set the `sync: false` secrets (`*_SECRET_KEY`, `ANTHROPIC_API_KEY`,
    `AGENT_VAULT_CONTRACT_ID`) in the Render dashboard for each service.
 3. After the first deploy, update `REGISTRY_URL` and each `*_SELF_URL` env
-   var to the assigned `*.onrender.com` URLs, then redeploy — agents
+   var to the assigned `*.onrender.com` URLs, then redeploy, agents
    re-register themselves with the registry on startup.
 
 Render's free tier cold-starts services after inactivity; the orchestrator's
@@ -370,12 +369,12 @@ seconds to accommodate this.
 ## Common pitfalls
 
 - **Agents can't reach the registry on startup.** Each agent's `register.ts`
-  self-registers once at boot with no retry — if the registry isn't up yet,
+  self-registers once at boot with no retry, if the registry isn't up yet,
   the agent won't appear until it's restarted or re-registers via its
   heartbeat. `start.sh` starts the registry first and waits for its health
   check for this reason.
 - **Stellar sequence number errors during execution.** `release_payment`
-  calls for a task must be submitted in order — `executor.ts`'s
+  calls for a task must be submitted in order, `executor.ts`'s
   `releaseSequential` serializes them. If you're calling
   `agent-vault-client.ts` functions directly (e.g. from a script), don't fire
   multiple orchestrator-signed transactions concurrently.
@@ -386,7 +385,7 @@ seconds to accommodate this.
   state to change.
 - **`data/` and `logs/` are gitignored and created at runtime.** If you
   `rm -rf data/`, the registry, vault ledger, activity log, and task history
-  all reset. Don't commit anything from `data/` — it includes orchestrator
+  all reset. Don't commit anything from `data/`, it includes orchestrator
   wallet secret keys (see [SECURITY.md](../SECURITY.md)).
 - **`tsc -b` project references.** Each workspace package has its own
   `tsconfig.json` extending the root config; `npm run typecheck` runs `tsc
@@ -429,7 +428,7 @@ roadmap) will eventually package this scaffolding so you don't have to copy it.
   contract ID and account addresses from `.env`.
 - **WebSocket events**: the orchestrator emits a typed event stream
   (`task_started`, `step_started`, `step_complete`, `step_failed`,
-  `budget_released`, `task_complete`) over `/ws` — connect with `wscat` or the
+  `budget_released`, `task_complete`) over `/ws`, connect with `wscat` or the
   dashboard's network tab to watch a task execute in real time.
 - **Vault ledger / activity log / task results**: inspect
   `data/vault-ledger.json`, `data/activity-log.json`, and
@@ -439,5 +438,5 @@ roadmap) will eventually package this scaffolding so you don't have to copy it.
 ## Getting help
 
 Open an issue (use the bug report or contributor issue template), or email
-the maintainer at joshuaibitoye111@gmail.com for anything sensitive — see
+the maintainer at joshuaibitoye111@gmail.com for anything sensitive, see
 [SECURITY.md](../SECURITY.md) for vulnerability reports specifically.
