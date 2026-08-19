@@ -826,6 +826,43 @@ fn test_release_payment_distinct_steps_same_amount_accumulate() {
 }
 
 #[test]
+fn test_release_payment_step_records_are_bounded_per_task() {
+    let test_env = setup_test();
+    test_env.client.init(&test_env.admin, &test_env.usdc_sac);
+
+    let user = Address::generate(&test_env.env);
+    let orchestrator = Address::generate(&test_env.env);
+    let name = soroban_sdk::String::from_str(&test_env.env, "BoundedStepsOrchestrator");
+
+    test_env.token_admin_client.mint(&user, &1000);
+    test_env.client.deposit(&user, &test_env.usdc_sac, &500);
+    test_env
+        .client
+        .register_orchestrator(&user, &orchestrator, &name);
+    let task_id = test_env
+        .client
+        .create_task(&orchestrator, &test_env.usdc_sac, &300);
+
+    for step_id in 1..=256 {
+        assert!(test_env.client.release_payment(
+            &orchestrator,
+            &task_id,
+            &step_id,
+            &test_env.usdc_sac,
+            &1
+        ));
+    }
+
+    let result =
+        test_env
+            .client
+            .try_release_payment(&orchestrator, &task_id, &257, &test_env.usdc_sac, &1);
+
+    assert!(result == Err(Ok(VaultError::TooManyStepReleases)));
+    assert_eq!(test_env.client.get_task(&task_id).unwrap().spent, 256);
+}
+
+#[test]
 fn test_release_payment_replay_after_completion_rejects_cleanly() {
     let test_env = setup_test();
     test_env.client.init(&test_env.admin, &test_env.usdc_sac);
