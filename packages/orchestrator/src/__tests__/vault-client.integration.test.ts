@@ -78,6 +78,19 @@ async function signAndSubmit(
   return pollForConfirmation(server, response.hash);
 }
 
+async function createVaultTask(orchestrator: Keypair, planCostUsdc: number): Promise<bigint> {
+  const hash = await signAndSubmit(orchestrator, 'create_task', [
+    new Address(orchestrator.publicKey()).toScVal(),
+    new Address(USDC_SAC).toScVal(),
+    usdcToScVal(planCostUsdc),
+  ]);
+  const result = await rpcServer().getTransaction(hash);
+  if (result.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS || !result.returnValue) {
+    throw new Error(`create_task returned no task id: ${hash}`);
+  }
+  return BigInt(scValToNative(result.returnValue));
+}
+
 async function pollForConfirmation(server: SorobanRpc.Server, hash: string): Promise<string> {
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 1000));
@@ -200,11 +213,7 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
 
       const before = await getAvailable(user.publicKey());
 
-      await signAndSubmit(orchestratorKp, 'create_task', [
-        new Address(orchestratorKp.publicKey()).toScVal(),
-        new Address(usdcSac).toScVal(),
-        usdcToScVal(0.1),
-      ]);
+      await createVaultTask(orchestratorKp, 0.1);
 
       const after = await getAvailable(user.publicKey());
       expect(before - after).toBe(BigInt(Math.round(0.1 * STROOPS_PER_USDC)));
@@ -233,18 +242,14 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       ]);
 
       // Create task with 0.1 USDC
-      await signAndSubmit(orchestratorKp, 'create_task', [
-        new Address(orchestratorKp.publicKey()).toScVal(),
-        new Address(usdcSac).toScVal(),
-        usdcToScVal(0.1),
-      ]);
+      const taskId = await createVaultTask(orchestratorKp, 0.1);
 
       const orchBefore = await getBalance(orchestratorKp.publicKey());
 
-      // Release 0.05 USDC (task_id=1 for first task in this context)
+      // Release 0.05 USDC against the task id returned by create_task.
       await signAndSubmit(orchestratorKp, 'release_payment', [
         new Address(orchestratorKp.publicKey()).toScVal(),
-        nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(taskId, { type: 'u64' }),
         nativeToScVal(1n, { type: 'u64' }),
         new Address(usdcSac).toScVal(),
         usdcToScVal(0.05),
@@ -277,15 +282,11 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       ]);
 
       // Create + complete a task
-      await signAndSubmit(orchestratorKp, 'create_task', [
-        new Address(orchestratorKp.publicKey()).toScVal(),
-        new Address(usdcSac).toScVal(),
-        usdcToScVal(0.3),
-      ]);
+      const taskId = await createVaultTask(orchestratorKp, 0.3);
 
       await signAndSubmit(orchestratorKp, 'complete_task', [
         new Address(orchestratorKp.publicKey()).toScVal(),
-        nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(taskId, { type: 'u64' }),
       ]);
 
       const available = await getAvailable(user.publicKey());
@@ -324,16 +325,12 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       ]);
 
       // Task with 0.05 budget
-      await signAndSubmit(orchestratorKp, 'create_task', [
-        new Address(orchestratorKp.publicKey()).toScVal(),
-        new Address(usdcSac).toScVal(),
-        usdcToScVal(0.05),
-      ]);
+      const taskId = await createVaultTask(orchestratorKp, 0.05);
 
       // First release: 0.05 (full budget)
       await signAndSubmit(orchestratorKp, 'release_payment', [
         new Address(orchestratorKp.publicKey()).toScVal(),
-        nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(taskId, { type: 'u64' }),
         nativeToScVal(1n, { type: 'u64' }),
         new Address(usdcSac).toScVal(),
         usdcToScVal(0.05),
@@ -343,7 +340,7 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
 
       await signAndSubmit(orchestratorKp, 'release_payment', [
         new Address(orchestratorKp.publicKey()).toScVal(),
-        nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(taskId, { type: 'u64' }),
         nativeToScVal(1n, { type: 'u64' }),
         new Address(usdcSac).toScVal(),
         usdcToScVal(0.05),
@@ -355,7 +352,7 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       await expect(
         signAndSubmit(orchestratorKp, 'release_payment', [
           new Address(orchestratorKp.publicKey()).toScVal(),
-          nativeToScVal(1n, { type: 'u64' }),
+          nativeToScVal(taskId, { type: 'u64' }),
           nativeToScVal(1n, { type: 'u64' }),
           new Address(usdcSac).toScVal(),
           usdcToScVal(0.01),
