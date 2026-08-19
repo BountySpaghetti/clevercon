@@ -245,6 +245,7 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       await signAndSubmit(orchestratorKp, 'release_payment', [
         new Address(orchestratorKp.publicKey()).toScVal(),
         nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(1n, { type: 'u64' }),
         new Address(usdcSac).toScVal(),
         usdcToScVal(0.05),
       ]);
@@ -305,7 +306,7 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
   // 5. Double release ───────────────────────────────────────────────────────
 
   it(
-    'double release_payment on same task fails',
+    'duplicate release_payment with same step_id is idempotent',
     async () => {
       const user = Keypair.random();
       await fundViaFriendbot(user.publicKey());
@@ -333,14 +334,28 @@ describe.skipIf(!CONTRACT_ID || !USDC_SAC)('vault-client integration @integratio
       await signAndSubmit(orchestratorKp, 'release_payment', [
         new Address(orchestratorKp.publicKey()).toScVal(),
         nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(1n, { type: 'u64' }),
         new Address(usdcSac).toScVal(),
         usdcToScVal(0.05),
       ]);
 
-      // Second release should fail (exceeds plan_cost)
+      const orchBeforeReplay = await getBalance(orchestratorKp.publicKey());
+
+      await signAndSubmit(orchestratorKp, 'release_payment', [
+        new Address(orchestratorKp.publicKey()).toScVal(),
+        nativeToScVal(1n, { type: 'u64' }),
+        nativeToScVal(1n, { type: 'u64' }),
+        new Address(usdcSac).toScVal(),
+        usdcToScVal(0.05),
+      ]);
+
+      const orchAfterReplay = await getBalance(orchestratorKp.publicKey());
+      expect(orchAfterReplay).toBe(orchBeforeReplay);
+
       await expect(
         signAndSubmit(orchestratorKp, 'release_payment', [
           new Address(orchestratorKp.publicKey()).toScVal(),
+          nativeToScVal(1n, { type: 'u64' }),
           nativeToScVal(1n, { type: 'u64' }),
           new Address(usdcSac).toScVal(),
           usdcToScVal(0.01),
