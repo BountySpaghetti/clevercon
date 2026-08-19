@@ -22,6 +22,7 @@ import {
 
 const CONTRACT_ID = process.env.AGENT_VAULT_CONTRACT_ID ?? '';
 const RPC_URL = process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org';
+const USDC_SAC = process.env.USDC_SAC ?? '';
 const NETWORK_PASSPHRASE = Networks.TESTNET;
 const STROOPS_PER_USDC = 10_000_000;
 
@@ -35,6 +36,13 @@ if (!VAULT_ACTIVE) {
 
 function usdcToStroops(usdc: number): bigint {
   return BigInt(Math.round(usdc * STROOPS_PER_USDC));
+}
+
+function usdcSacScVal(): xdr.ScVal {
+  if (!USDC_SAC) {
+    throw new Error('USDC_SAC is required for AgentVault multi-asset calls');
+  }
+  return new Address(USDC_SAC).toScVal();
 }
 
 function rpc() {
@@ -162,6 +170,7 @@ export async function buildDepositXdr(
   if (!VAULT_ACTIVE) return null;
   return buildUnsignedXdr(userAddress, 'deposit', [
     new Address(userAddress).toScVal(),
+    usdcSacScVal(),
     nativeToScVal(usdcToStroops(amountUsdc), { type: 'i128' }),
   ]);
 }
@@ -177,6 +186,7 @@ export async function buildWithdrawXdr(
   if (!VAULT_ACTIVE) return null;
   return buildUnsignedXdr(userAddress, 'withdraw', [
     new Address(userAddress).toScVal(),
+    usdcSacScVal(),
     nativeToScVal(usdcToStroops(amountUsdc), { type: 'i128' }),
   ]);
 }
@@ -207,6 +217,7 @@ export async function createTask(
         contract.call(
           'create_task',
           new Address(orchestratorKeypair.publicKey()).toScVal(),
+          usdcSacScVal(),
           nativeToScVal(usdcToStroops(planCostUsdc), { type: 'i128' }),
         ),
       )
@@ -242,6 +253,7 @@ export async function createTask(
 export async function releasePayment(
   orchestratorKeypair: Keypair,
   taskId: bigint,
+  stepId: bigint,
   amountUsdc: number,
 ): Promise<string | null> {
   if (!VAULT_ACTIVE || !taskId) return null;
@@ -249,6 +261,8 @@ export async function releasePayment(
     const hash = await signAndSubmit(orchestratorKeypair, 'release_payment', [
       new Address(orchestratorKeypair.publicKey()).toScVal(),
       nativeToScVal(taskId, { type: 'u64' }),
+      nativeToScVal(stepId, { type: 'u64' }),
+      usdcSacScVal(),
       nativeToScVal(usdcToStroops(amountUsdc), { type: 'i128' }),
     ]);
     return hash;
@@ -344,7 +358,10 @@ async function callView(method: string, args: xdr.ScVal[]): Promise<any> {
 export async function getBalance(userAddress: string): Promise<bigint> {
   if (!VAULT_ACTIVE) return 0n;
   try {
-    const result = await callView('get_balance', [new Address(userAddress).toScVal()]);
+    const result = await callView('get_balance', [
+      new Address(userAddress).toScVal(),
+      usdcSacScVal(),
+    ]);
     return result !== null ? BigInt(result) : 0n;
   } catch {
     return 0n;
@@ -355,7 +372,10 @@ export async function getBalance(userAddress: string): Promise<bigint> {
 export async function getAvailable(userAddress: string): Promise<bigint> {
   if (!VAULT_ACTIVE) return 0n;
   try {
-    const result = await callView('get_available', [new Address(userAddress).toScVal()]);
+    const result = await callView('get_available', [
+      new Address(userAddress).toScVal(),
+      usdcSacScVal(),
+    ]);
     return result !== null ? BigInt(result) : 0n;
   } catch {
     return 0n;
@@ -383,7 +403,7 @@ export interface VaultAccount {
 export async function getAccount(userAddress: string): Promise<VaultAccount | null> {
   if (!VAULT_ACTIVE) return null;
   // Let exceptions propagate — caller distinguishes RPC errors from "no account"
-  const raw = await callView('get_account', [new Address(userAddress).toScVal()]);
+  const raw = await callView('get_account', [new Address(userAddress).toScVal(), usdcSacScVal()]);
   // Option::None from the contract → account doesn't exist yet → zero balance
   if (raw === null || raw === undefined) {
     return {
