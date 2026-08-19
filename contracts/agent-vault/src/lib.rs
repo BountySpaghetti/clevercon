@@ -155,6 +155,8 @@ pub enum VaultError {
     DisputeSplitMismatch = 21,
     DisputeResolverNotSet = 22,
     TaskNotDisputed = 23,
+    ReleaseConflict = 24,
+    TooManyStepReleases = 25,
 }
 
 // Storage keys
@@ -190,6 +192,10 @@ pub enum DataKey {
     MaxActiveTasks,
     /// The dedicated resolver authorized to settle raised disputes.
     DisputeResolver,
+    /// Idempotency record for a released plan step under a task.
+    TaskStepRelease(u64, u64),
+    /// Enumerable list of released step IDs for cleanup on task finalization.
+    TaskStepIds(u64),
 }
 
 // Data structs
@@ -270,6 +276,14 @@ pub struct TaskInfo {
     pub created_at: u64,
 }
 
+/// Per-step release idempotency record. Presence means this `(task_id, step_id)`
+/// has already produced its transfer with the recorded amount.
+#[contracttype]
+#[derive(Clone)]
+pub struct StepRelease {
+    pub amount: i128,
+}
+
 /// Authoritative lifecycle state for a task at the current ledger timestamp.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -294,6 +308,10 @@ const DEFAULT_MAX_ACTIVE_TASKS: u32 = 50;
 /// Maximum number of task records returned by `get_user_task_infos`.
 const MAX_USER_TASK_INFOS_PAGE_SIZE: u32 = 50;
 
+/// Bounds per-task idempotency storage. Normal plans are far smaller; the cap
+/// prevents a hostile orchestrator from creating unbounded persistent keys.
+const MAX_RELEASE_STEPS_PER_TASK: u32 = 256;
+
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280; // ~1 day
 const PERSISTENT_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
@@ -307,7 +325,7 @@ const INSTANCE_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 /// deployment before assuming a given function or storage layout
 /// exists, especially important on Soroban where the same address
 /// can be upgraded in place.
-const CONTRACT_VERSION: u32 = 4;
+const CONTRACT_VERSION: u32 = 5;
 
 // Contract
 
@@ -788,6 +806,7 @@ impl AgentVault {
         env: Env,
         orchestrator: Address,
         task_id: u64,
+        step_id: u64,
         asset: Address,
         amount: i128,
     ) -> Result<bool, VaultError> {
@@ -817,9 +836,22 @@ impl AgentVault {
         if task.asset != asset {
             return Err(VaultError::AssetMismatch);
         }
+
+        let step_key = DataKey::TaskStepRelease(task_id, step_id);
+        if let Some(record) = env.storage().persistent().get::<_, StepRelease>(&step_key) {
+            Self::extend_persistent_ttl(&env, &step_key);
+            Self::extend_task_step_ids_ttl(&env, task_id);
+            if record.amount == amount {
+                return Ok(true);
+            }
+            return Err(VaultError::ReleaseConflict);
+        }
+
         if task.spent + amount > task.plan_cost {
             return Err(VaultError::ExceedsPlanCost);
         }
+
+        Self::record_step_release(&env, task_id, step_id, amount)?;
 
         Self::extend_instance_ttl(&env);
         let token_client = token::Client::new(&env, &asset);
@@ -1174,6 +1206,7 @@ impl AgentVault {
         task.completed = true;
         env.storage().persistent().set(&task_key, &task);
         Self::extend_persistent_ttl(env, &task_key);
+        Self::remove_task_step_releases(env, task_id);
 
         if dispute_split.is_none() {
             let refund = task.plan_cost - task.spent;
@@ -1194,6 +1227,69 @@ impl AgentVault {
             );
         }
         Ok(())
+    }
+
+    fn record_step_release(
+        env: &Env,
+        task_id: u64,
+        step_id: u64,
+        amount: i128,
+    ) -> Result<(), VaultError> {
+        let ids_key = DataKey::TaskStepIds(task_id);
+        let mut step_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&ids_key)
+            .unwrap_or(Vec::new(env));
+
+        if !step_ids.iter().any(|id| id == step_id) {
+            if step_ids.len() >= MAX_RELEASE_STEPS_PER_TASK {
+                return Err(VaultError::TooManyStepReleases);
+            }
+            step_ids.push_back(step_id);
+            env.storage().persistent().set(&ids_key, &step_ids);
+            Self::extend_persistent_ttl(env, &ids_key);
+        }
+
+        let step_key = DataKey::TaskStepRelease(task_id, step_id);
+        env.storage()
+            .persistent()
+            .set(&step_key, &StepRelease { amount });
+        Self::extend_persistent_ttl(env, &step_key);
+        Ok(())
+    }
+
+    fn extend_task_step_ids_ttl(env: &Env, task_id: u64) {
+        let ids_key = DataKey::TaskStepIds(task_id);
+        let step_ids: Vec<u64> = match env.storage().persistent().get(&ids_key) {
+            Some(ids) => ids,
+            None => return,
+        };
+        Self::extend_persistent_ttl(env, &ids_key);
+        for step_id in step_ids.iter() {
+            let step_key = DataKey::TaskStepRelease(task_id, step_id);
+            if env.storage().persistent().has(&step_key) {
+                Self::extend_persistent_ttl(env, &step_key);
+            }
+        }
+    }
+
+    fn remove_task_step_releases(env: &Env, task_id: u64) {
+        let ids_key = DataKey::TaskStepIds(task_id);
+        let step_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&ids_key)
+            .unwrap_or(Vec::new(env));
+        for step_id in step_ids.iter() {
+            let step_key = DataKey::TaskStepRelease(task_id, step_id);
+            if env.storage().persistent().has(&step_key) {
+                env.storage().persistent().remove(&step_key);
+            }
+        }
+        if env.storage().persistent().has(&ids_key) {
+            env.storage().persistent().remove(&ids_key);
+        }
     }
 
     /// Loads the user's asset account balance, or returns a zeroed struct if not found.
