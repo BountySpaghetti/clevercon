@@ -22,10 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Roadmap Phase 1: integrate the zero-knowledge policy engine — already deployed
-  and demonstrated on testnet as [CipherMit](https://github.com/Bosun-Josh121/ciphermit)
-  (RISC Zero zkVM + Groth16, verified proofs for allowance/allowlist/delegation)
-  — into CleverVault as its enforcement core.
+- Roadmap for private spending policies: a spending rule the user sets and the
+  vault enforces on-chain without revealing it, building on the zero-knowledge
+  engine at [CipherMit](https://github.com/Bosun-Josh121/ciphermit).
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, and this
   changelog.
 - `docs/architecture.md` and `docs/development.md`.
