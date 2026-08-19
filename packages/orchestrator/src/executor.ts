@@ -259,8 +259,14 @@ export class PlanExecutor extends EventEmitter {
       // ── Vault release: contract → orchestrator (serialized to avoid sequence conflicts)
       let releaseHash: string | null = null;
       if (VAULT_ACTIVE && this.orchestratorKeypair && this.vaultTaskId !== null) {
+        const vaultStepId = BigInt(step.step_id);
         const released = await this.releaseSequential(async () => {
-          return releasePayment(this.orchestratorKeypair!, this.vaultTaskId!, amountUsdc);
+          return releasePayment(
+            this.orchestratorKeypair!,
+            this.vaultTaskId!,
+            vaultStepId,
+            amountUsdc,
+          );
         });
 
         if (!released) {
