@@ -9,9 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Refocused the docs on what CleverCon does: delegate a budget to AI agents on
-  Stellar, with funds held in a non-custodial vault that enforces the limit.
-  Rewrote `README.md`, `docs/architecture.md`, and `ROADMAP.md`.
+- **Breaking:** `AgentVault::release_payment` now requires a caller-supplied
+  `step_id` between `task_id` and `asset`. Replays with the same
+  `(task_id, step_id, amount)` are idempotent successes, while reusing a
+  `step_id` with a different amount is rejected as `ReleaseConflict`.
+- Repositioned the project around **private, policy-bounded delegation of money
+  to AI agents**: a non-custodial CleverVault under a private, zero-knowledge-
+  enforced spending policy. Updated `README.md`, `docs/architecture.md`, and
+  `ROADMAP.md` to lead with this framing, with a clear line between what is live
+  on testnet today (non-custodial vault + orchestration + agents) and the
+  grant-scope roadmap (ZK policy enforcement, audit, mainnet).
 
 ### Added
 

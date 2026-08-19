@@ -16,6 +16,7 @@ logs/
 
 # Rust build artifacts
 contracts/*/target/
+contracts/*/test_snapshots/
 
 # Source maps
 *.js.map
