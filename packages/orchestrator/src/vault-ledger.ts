@@ -1,5 +1,5 @@
 /**
- * Vault Ledger — persists per-user vault transactions.
+ * Vault Ledger â€” persists per-user vault transactions.
  * Tracks deposits, withdrawals, and agent payments with real amounts and tx hashes.
  *
  * Uses atomic rename writes to prevent corruption on process crash.
@@ -13,7 +13,7 @@ const __dirname = path.dirname(path.resolve(process.argv[1]));
 const DATA_DIR = path.join(__dirname, '..', '..', '..', 'data');
 const LEDGER_PATH = path.join(DATA_DIR, 'vault-ledger.json');
 
-export type VaultTxType = 'deposit' | 'withdrawal' | 'payment' | 'budget_lock';
+export type VaultTxType = 'deposit' | 'withdrawal' | 'payment' | 'budget_lock' | 'adjustment';
 
 export interface VaultLedgerEntry {
   id: string;
@@ -71,6 +71,10 @@ export function getVaultLedger(userAddress: string, limit = 100): VaultLedgerEnt
     .filter((e) => e.user_address === userAddress)
     .slice(-limit)
     .reverse();
+}
+
+export function getAllVaultTx(userAddress: string): VaultLedgerEntry[] {
+  return load().filter((e) => e.user_address === userAddress);
 }
 
 export function clearVaultLedger(): void {

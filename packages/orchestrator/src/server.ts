@@ -56,6 +56,7 @@ import {
   getAllTaskResults,
 } from './task-results.js';
 import { getMetrics, seedMetrics, taskStarted, taskCompleted, taskFailed } from './metrics.js';
+import { runReconciliation, getReconciliationSummary, getAuditLog } from './reconciliation.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -323,7 +324,24 @@ app.get('/health', (_req, res) => {
 
 // Operational counters — see docs/development.md for the response shape
 app.get('/metrics', (_req, res) => {
-  res.json(getMetrics());
+  res.json({ ...getMetrics(), reconciliation: getReconciliationSummary() });
+});
+
+// GET /reconciliation -- dry-run drift report by default; add ?repair=true to apply fixes
+app.get('/reconciliation', async (req, res) => {
+  try {
+    const repair = req.query.repair === 'true';
+    const report = await runReconciliation({ repair });
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /reconciliation/audit -- append-only audit trail, optionally filtered by user_address
+app.get('/reconciliation/audit', (req, res) => {
+  const userAddress = req.query.user_address as string | undefined;
+  res.json({ entries: getAuditLog(userAddress) });
 });
 
 // List agents from registry
