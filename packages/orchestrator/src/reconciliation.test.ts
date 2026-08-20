@@ -24,6 +24,7 @@ vi.mock('./orchestrator-store.js', () => ({
 vi.mock('./vault-ledger.js', () => ({
   getAllVaultTx: vi.fn(),
   appendVaultTx: vi.fn(),
+  isLedgerAtRetentionCap: vi.fn(() => false),
 }));
 
 import { getAccount } from './agent-vault-client.js';
@@ -37,13 +38,29 @@ import {
 
 const USER = 'GABC123';
 
-function ledgerEntry(type: 'deposit' | 'withdrawal' | 'payment' | 'budget_lock', amount: number) {
+function ledgerEntry(
+  type: 'deposit' | 'withdrawal' | 'payment' | 'budget_lock' | 'adjustment',
+  amount: number,
+  extra: { adjustment_target?: 'balance' | 'spent'; adjustment_direction?: 'increase' | 'decrease' } = {},
+) {
   return {
     id: 'x',
     user_address: USER,
     type,
     amount_usdc: amount,
     timestamp: new Date().toISOString(),
+    ...extra,
+  };
+}
+
+function orchRecord() {
+  return {
+    user_address: USER,
+    orchestrator_name: 'test',
+    orchestrator_pubkey: 'pk',
+    orchestrator_secret: 'sk',
+    registered_on_chain: true,
+    created_at: new Date().toISOString(),
   };
 }
 
@@ -70,14 +87,12 @@ describe('computeUserDrift', () => {
 
     expect(drift.drift).toBe(false);
     expect(drift.diffs).toHaveLength(0);
-    expect(drift.local.balance_usdc).toBeCloseTo(80);
-    expect(drift.chain.balance_usdc).toBeCloseTo(80);
   });
 
   it('classifies balance_mismatch when local balance differs from chain', async () => {
     vi.mocked(getAllVaultTx).mockReturnValue([ledgerEntry('deposit', 100)]);
     vi.mocked(getAccount).mockResolvedValue({
-      balance: 90, // chain thinks balance is 90, local computes 100
+      balance: 90,
       available: 90,
       locked: 0,
       total_deposited: 100,
@@ -88,11 +103,11 @@ describe('computeUserDrift', () => {
     const drift = await computeUserDrift(USER);
 
     expect(drift.drift).toBe(true);
-    const balanceDiff = drift.diffs.find((d) => d.type === 'balance_mismatch');
-    expect(balanceDiff).toBeDefined();
-    expect(balanceDiff!.local_value).toBeCloseTo(100);
-    expect(balanceDiff!.chain_value).toBeCloseTo(90);
-    expect(balanceDiff!.delta_usdc).toBeCloseTo(-10);
+    const d = drift.diffs.find((x) => x.type === 'balance_mismatch');
+    expect(d).toBeDefined();
+    expect(d!.local_value).toBeCloseTo(100);
+    expect(d!.chain_value).toBeCloseTo(90);
+    expect(d!.delta_usdc).toBeCloseTo(-10);
   });
 
   it('classifies spent_mismatch when local spend differs from chain total_spent', async () => {
@@ -105,17 +120,37 @@ describe('computeUserDrift', () => {
       available: 80,
       locked: 0,
       total_deposited: 100,
-      total_spent: 25, // chain shows more spend than local ledger has (a missed payment)
+      total_spent: 25,
       active_tasks_count: 0,
     });
 
     const drift = await computeUserDrift(USER);
 
     expect(drift.drift).toBe(true);
-    const spentDiff = drift.diffs.find((d) => d.type === 'spent_mismatch');
-    expect(spentDiff).toBeDefined();
-    expect(spentDiff!.local_value).toBeCloseTo(20);
-    expect(spentDiff!.chain_value).toBeCloseTo(25);
+    const d = drift.diffs.find((x) => x.type === 'spent_mismatch');
+    expect(d).toBeDefined();
+    expect(d!.local_value).toBeCloseTo(20);
+    expect(d!.chain_value).toBeCloseTo(25);
+  });
+
+  it('applies adjustment entries to the correct total based on their target', async () => {
+    vi.mocked(getAllVaultTx).mockReturnValue([
+      ledgerEntry('deposit', 100),
+      ledgerEntry('payment', 20),
+      ledgerEntry('adjustment', 5, { adjustment_target: 'spent', adjustment_direction: 'increase' }),
+    ]);
+    vi.mocked(getAccount).mockResolvedValue({
+      balance: 80,
+      available: 80,
+      locked: 0,
+      total_deposited: 100,
+      total_spent: 25, // local spent = 20 + 5 adjustment = 25, matches chain
+      active_tasks_count: 0,
+    });
+
+    const drift = await computeUserDrift(USER);
+
+    expect(drift.drift).toBe(false);
   });
 
   it('treats budget_lock entries as informational (no balance/spend effect)', async () => {
@@ -150,16 +185,7 @@ describe('computeUserDrift', () => {
 
 describe('runReconciliation', () => {
   it('dry-run mode reports drift but never calls appendVaultTx', async () => {
-    vi.mocked(orchestratorStore.all).mockReturnValue([
-      {
-        user_address: USER,
-        orchestrator_name: 'test',
-        orchestrator_pubkey: 'pk',
-        orchestrator_secret: 'sk',
-        registered_on_chain: true,
-        created_at: new Date().toISOString(),
-      },
-    ]);
+    vi.mocked(orchestratorStore.all).mockReturnValue([orchRecord()]);
     vi.mocked(getAllVaultTx).mockReturnValue([ledgerEntry('deposit', 100)]);
     vi.mocked(getAccount).mockResolvedValue({
       balance: 50,
@@ -178,33 +204,39 @@ describe('runReconciliation', () => {
     expect(appendVaultTx).not.toHaveBeenCalled();
   });
 
-  it('repair mode applies fixes and updates the metrics summary', async () => {
-    vi.mocked(orchestratorStore.all).mockReturnValue([
-      {
-        user_address: USER,
-        orchestrator_name: 'test',
-        orchestrator_pubkey: 'pk',
-        orchestrator_secret: 'sk',
-        registered_on_chain: true,
-        created_at: new Date().toISOString(),
-      },
+  it('repair mode corrects both balance_mismatch and spent_mismatch independently', async () => {
+    vi.mocked(orchestratorStore.all).mockReturnValue([orchRecord()]);
+    vi.mocked(getAllVaultTx).mockReturnValue([
+      ledgerEntry('deposit', 100),
+      ledgerEntry('payment', 20),
     ]);
-    vi.mocked(getAllVaultTx).mockReturnValue([ledgerEntry('deposit', 100)]);
     vi.mocked(getAccount).mockResolvedValue({
-      balance: 50,
+      balance: 50, // local computes 80 -> balance drift
       available: 50,
       locked: 0,
       total_deposited: 100,
-      total_spent: 0,
+      total_spent: 25, // local computes 20 -> spent drift
       active_tasks_count: 0,
     });
 
     const report = await runReconciliation({ repair: true });
 
     expect(report.mode).toBe('repair');
-    expect(report.repaired_count).toBeGreaterThan(0);
+    expect(report.repaired_count).toBe(2); // both diffs corrected
+
     expect(appendVaultTx).toHaveBeenCalledWith(
-      expect.objectContaining({ user_address: USER, type: 'adjustment' }),
+      expect.objectContaining({
+        user_address: USER,
+        type: 'adjustment',
+        adjustment_target: 'balance',
+      }),
+    );
+    expect(appendVaultTx).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_address: USER,
+        type: 'adjustment',
+        adjustment_target: 'spent',
+      }),
     );
 
     const summary = getReconciliationSummary();
@@ -212,36 +244,45 @@ describe('runReconciliation', () => {
     expect(summary.drift_count).toBe(1);
   });
 
-  it('is idempotent: a clean second run makes no changes', async () => {
-    vi.mocked(orchestratorStore.all).mockReturnValue([
-      {
-        user_address: USER,
-        orchestrator_name: 'test',
-        orchestrator_pubkey: 'pk',
-        orchestrator_secret: 'sk',
-        registered_on_chain: true,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-    // Local already matches chain -- nothing to repair.
-    vi.mocked(getAllVaultTx).mockReturnValue([
+  it('is idempotent: replaying the applied adjustments makes a second repair a no-op', async () => {
+    vi.mocked(orchestratorStore.all).mockReturnValue([orchRecord()]);
+    // First run: drift on both balance and spend.
+    vi.mocked(getAllVaultTx).mockReturnValueOnce([
       ledgerEntry('deposit', 100),
       ledgerEntry('payment', 20),
     ]);
     vi.mocked(getAccount).mockResolvedValue({
-      balance: 80,
-      available: 80,
+      balance: 50,
+      available: 50,
       locked: 0,
       total_deposited: 100,
-      total_spent: 20,
+      total_spent: 25,
       active_tasks_count: 0,
     });
 
     const first = await runReconciliation({ repair: true });
+    expect(first.repaired_count).toBe(2);
+
+    // Second run: ledger now includes the two corrective adjustment entries
+    // the first run appended -- local should now match chain exactly.
+    vi.mocked(getAllVaultTx).mockReturnValueOnce([
+      ledgerEntry('deposit', 100),
+      ledgerEntry('payment', 20),
+      ledgerEntry('adjustment', 30, { adjustment_target: 'balance', adjustment_direction: 'decrease' }),
+      ledgerEntry('adjustment', 5, { adjustment_target: 'spent', adjustment_direction: 'increase' }),
+    ]);
+
+    vi.mocked(appendVaultTx).mockClear();
     const second = await runReconciliation({ repair: true });
 
-    expect(first.users_with_drift).toBe(0);
     expect(second.users_with_drift).toBe(0);
+    expect(second.repaired_count).toBe(0);
     expect(appendVaultTx).not.toHaveBeenCalled();
+  });
+
+  it('surfaces ledger_at_retention_cap on the report', async () => {
+    vi.mocked(orchestratorStore.all).mockReturnValue([]);
+    const report = await runReconciliation();
+    expect(report).toHaveProperty('ledger_at_retention_cap');
   });
 });

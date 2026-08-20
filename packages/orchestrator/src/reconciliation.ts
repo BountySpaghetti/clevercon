@@ -1,18 +1,30 @@
-/**
+﻿/**
  * Vault Reconciliation Worker.
  *
  * Treats the on-chain AgentVault contract as the source of truth for a user's
  * balance and total spend, diffs it against the local off-chain ledger
- * (vault-ledger.ts), reports drift, and -- only when explicitly requested --
+ * (vault-ledger.ts), reports drift, and -- only via the POST endpoint --
  * repairs the local view by appending a corrective ledger entry.
  *
  * Scope note: this pass reconciles account-level state (getAccount vs the
  * summed vault-ledger). Task-level reconciliation against BudgetGuardian's
- * getTask is out of scope for this pass -- BudgetGuardian is not currently
- * wired into the live task pipeline in server.ts (only agent-vault-client.ts
- * is used for createTask/releasePayment/completeTask), so there is no live
- * vault_task_id -> BudgetGuardian task mapping to reconcile against yet. See
- * PR discussion on #105 for the two-pass diff model.
+ * getTask is out of scope -- BudgetGuardian is not wired into the live task
+ * pipeline (server.ts only uses agent-vault-client.ts). See docs/reconciliation.md.
+ *
+ * Known limitation: vault-ledger.ts caps its global store at 2000 entries
+ * (across all users). getAllVaultTx() can only see what's still retained, so
+ * a very high-activity user's older history may already be trimmed, which
+ * could look like drift even when nothing is actually wrong. There's no
+ * per-user checkpoint to fall back on yet -- ledger_at_retention_cap on the
+ * report flags when the global store is at/near that cap so operators can
+ * tell a real drift claim from a truncation artifact. A real fix (per-user
+ * balance checkpoints) is a separate, larger change.
+ *
+ * Repair is serialized in-process (a single orchestrator instance can't run
+ * two overlapping repair passes), but there's no cross-process lock -- if
+ * this worker is ever run from multiple orchestrator processes concurrently,
+ * durable coordination (e.g. a DB advisory lock) would be needed. Not
+ * implemented here since the current deployment is single-process.
  *
  * Never writes on-chain. Repair only ever appends to the local ledger.
  */
@@ -21,7 +33,12 @@ import fs from 'fs';
 import path from 'path';
 import { writeJsonSafe } from '@clevercon/common';
 import { getAccount } from './agent-vault-client.js';
-import { getAllVaultTx, appendVaultTx, type VaultLedgerEntry } from './vault-ledger.js';
+import {
+  getAllVaultTx,
+  appendVaultTx,
+  isLedgerAtRetentionCap,
+  type VaultLedgerEntry,
+} from './vault-ledger.js';
 import * as orchestratorStore from './orchestrator-store.js';
 
 const __dirname = path.dirname(path.resolve(process.argv[1]));
@@ -54,15 +71,23 @@ type AuditLog = ReconciliationAuditEntry[];
 
 let auditCache: AuditLog | null = null;
 
+/**
+ * Loads the audit log. Only a confirmed-missing file initializes an empty
+ * log; any other failure (unreadable file, corrupt JSON, permission error)
+ * propagates so callers don't silently treat "couldn't read the log" the
+ * same as "there is no history" -- which could otherwise lead to an empty
+ * cache being persisted over real audit history.
+ */
 function loadAudit(): AuditLog {
   if (auditCache) return auditCache;
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    if (!fs.existsSync(AUDIT_PATH)) fs.writeFileSync(AUDIT_PATH, '[]', 'utf8');
-    auditCache = JSON.parse(fs.readFileSync(AUDIT_PATH, 'utf8')) as AuditLog;
-  } catch {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(AUDIT_PATH)) {
+    fs.writeFileSync(AUDIT_PATH, '[]', 'utf8');
     auditCache = [];
+    return auditCache;
   }
+  const raw = fs.readFileSync(AUDIT_PATH, 'utf8');
+  auditCache = JSON.parse(raw) as AuditLog;
   return auditCache;
 }
 
@@ -112,6 +137,7 @@ export interface ReconciliationReport {
   users_checked: number;
   users_with_drift: number;
   repaired_count: number;
+  ledger_at_retention_cap: boolean;
   results: UserDrift[];
 }
 
@@ -119,10 +145,12 @@ export interface ReconciliationReport {
  * Sum local ledger entries into a derived balance and total spend, in stroops
  * for exact comparison against on-chain amounts.
  *
- * balance = deposits - withdrawals - payments (budget_lock entries are
- * informational locks, not settled movements, so they're excluded from the
- * balance/spend totals -- mirrors how the chain's `balance` only reflects
- * settled deposit/withdraw/payment activity).
+ * balance = deposits - withdrawals - payments +/- balance-targeted adjustments
+ * spent   = payments +/- spent-targeted adjustments
+ *
+ * budget_lock entries are informational locks, not settled movements, so
+ * they're excluded -- mirrors how the chain's balance/total_spent only
+ * reflect settled activity.
  */
 function summarizeLocalLedger(entries: VaultLedgerEntry[]): {
   balanceStroops: bigint;
@@ -132,11 +160,20 @@ function summarizeLocalLedger(entries: VaultLedgerEntry[]): {
   let spent = 0n;
   for (const e of entries) {
     const amt = usdcToStroops(e.amount_usdc);
-    if (e.type === 'deposit') balance += amt;
-    else if (e.type === 'withdrawal') balance -= amt;
-    else if (e.type === 'payment') {
+    if (e.type === 'deposit') {
+      balance += amt;
+    } else if (e.type === 'withdrawal') {
+      balance -= amt;
+    } else if (e.type === 'payment') {
       balance -= amt;
       spent += amt;
+    } else if (e.type === 'adjustment') {
+      const sign = e.adjustment_direction === 'decrease' ? -1n : 1n;
+      if (e.adjustment_target === 'spent') {
+        spent += sign * amt;
+      } else {
+        balance += sign * amt;
+      }
     }
     // 'budget_lock' entries: informational only, no balance/spend effect.
   }
@@ -191,23 +228,30 @@ export async function computeUserDrift(userAddress: string): Promise<UserDrift> 
 
 /**
  * Repair a single user's local ledger to match chain, by appending a
- * corrective 'adjustment' entry (never mutating existing entries) and
- * writing an audit record for every field changed. No-op if there's no
- * drift (idempotent).
+ * corrective 'adjustment' entry per diff (never mutating existing entries)
+ * and writing an audit record for every field changed. Both balance_mismatch
+ * and spent_mismatch are corrected -- each targets the specific total it
+ * affects, so correcting one never silently mis-corrects the other.
+ * No-op if there's no drift (idempotent).
  */
 async function repairUser(userDrift: UserDrift): Promise<number> {
   if (!userDrift.drift) return 0;
 
   let repaired = 0;
   for (const d of userDrift.diffs) {
-    if (d.type === 'balance_mismatch' && Math.abs(d.delta_usdc) > 0) {
-      appendVaultTx({
-        user_address: userDrift.user_address,
-        type: 'adjustment',
-        amount_usdc: Math.abs(d.delta_usdc),
-        task_id: d.delta_usdc >= 0 ? 'reconciliation:credit' : 'reconciliation:debit',
-      });
-    }
+    if (Math.abs(d.delta_usdc) <= 0) continue;
+
+    const target: 'balance' | 'spent' = d.type === 'spent_mismatch' ? 'spent' : 'balance';
+    const direction: 'increase' | 'decrease' = d.delta_usdc >= 0 ? 'increase' : 'decrease';
+
+    appendVaultTx({
+      user_address: userDrift.user_address,
+      type: 'adjustment',
+      amount_usdc: Math.abs(d.delta_usdc),
+      adjustment_target: target,
+      adjustment_direction: direction,
+      task_id: `reconciliation:${d.type}`,
+    });
 
     appendAudit({
       user_address: userDrift.user_address,
@@ -245,46 +289,66 @@ export function getReconciliationSummary(): ReconciliationSummary {
   return { ...summary };
 }
 
+// -- Repair serialization (single-process only; see module-level comment) --
+
+let repairLock: Promise<void> = Promise.resolve();
+
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const run = repairLock.then(fn, fn);
+  repairLock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 // -- Entry point --
 
 /**
  * Run reconciliation across every known user (from orchestrator-store).
  * Dry-run (default) computes and returns the drift report only. Pass
- * `{ repair: true }` to also apply fixes and write audit entries.
+ * `{ repair: true }` to also apply fixes and write audit entries -- repair
+ * runs are serialized within this process so overlapping calls can't
+ * double-append corrections.
  */
 export async function runReconciliation(
   opts: { repair?: boolean } = {},
 ): Promise<ReconciliationReport> {
   const mode: 'dry-run' | 'repair' = opts.repair ? 'repair' : 'dry-run';
-  const users = orchestratorStore.all().map((r) => r.user_address);
+  const execute = async (): Promise<ReconciliationReport> => {
+    const users = orchestratorStore.all().map((r) => r.user_address);
 
-  const results: UserDrift[] = [];
-  let repairedCount = 0;
+    const results: UserDrift[] = [];
+    let repairedCount = 0;
 
-  for (const userAddress of users) {
-    const drift = await computeUserDrift(userAddress);
-    results.push(drift);
-    if (mode === 'repair' && drift.drift) {
-      repairedCount += await repairUser(drift);
+    for (const userAddress of users) {
+      const drift = await computeUserDrift(userAddress);
+      results.push(drift);
+      if (mode === 'repair' && drift.drift) {
+        repairedCount += await repairUser(drift);
+      }
     }
-  }
 
-  const usersWithDrift = results.filter((r) => r.drift).length;
+    const usersWithDrift = results.filter((r) => r.drift).length;
+    const ranAt = new Date().toISOString();
 
-  const ranAt = new Date().toISOString();
-  summary = {
-    last_run: ranAt,
-    last_mode: mode,
-    drift_count: usersWithDrift,
-    repaired_count: mode === 'repair' ? repairedCount : summary.repaired_count,
+    summary = {
+      last_run: ranAt,
+      last_mode: mode,
+      drift_count: usersWithDrift,
+      repaired_count: mode === 'repair' ? repairedCount : summary.repaired_count,
+    };
+
+    return {
+      ran_at: ranAt,
+      mode,
+      users_checked: users.length,
+      users_with_drift: usersWithDrift,
+      repaired_count: mode === 'repair' ? repairedCount : 0,
+      ledger_at_retention_cap: isLedgerAtRetentionCap(),
+      results,
+    };
   };
 
-  return {
-    ran_at: ranAt,
-    mode,
-    users_checked: users.length,
-    users_with_drift: usersWithDrift,
-    repaired_count: mode === 'repair' ? repairedCount : 0,
-    results,
-  };
+  return mode === 'repair' ? serialized(execute) : execute();
 }

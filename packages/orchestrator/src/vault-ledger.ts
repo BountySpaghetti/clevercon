@@ -24,6 +24,8 @@ export interface VaultLedgerEntry {
   task_id?: string;
   agent_name?: string; // for payment entries
   timestamp: string;
+  adjustment_target?: 'balance' | 'spent';
+  adjustment_direction?: 'increase' | 'decrease';
 }
 
 type Ledger = VaultLedgerEntry[];
@@ -75,6 +77,10 @@ export function getVaultLedger(userAddress: string, limit = 100): VaultLedgerEnt
 
 export function getAllVaultTx(userAddress: string): VaultLedgerEntry[] {
   return load().filter((e) => e.user_address === userAddress);
+}
+
+export function isLedgerAtRetentionCap(): boolean {
+  return load().length >= 2000;
 }
 
 export function clearVaultLedger(): void {

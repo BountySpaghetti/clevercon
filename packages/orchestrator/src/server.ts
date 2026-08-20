@@ -327,21 +327,50 @@ app.get('/metrics', (_req, res) => {
   res.json({ ...getMetrics(), reconciliation: getReconciliationSummary() });
 });
 
-// GET /reconciliation -- dry-run drift report by default; add ?repair=true to apply fixes
-app.get('/reconciliation', async (req, res) => {
+// GET /reconciliation -- report-only drift check, never repairs
+app.get('/reconciliation', async (_req, res) => {
   try {
-    const repair = req.query.repair === 'true';
-    const report = await runReconciliation({ repair });
+    const report = await runReconciliation({ repair: false });
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /reconciliation/audit -- append-only audit trail, optionally filtered by user_address
+// POST /reconciliation -- run reconciliation and apply repairs
+app.post('/reconciliation', async (_req, res) => {
+  try {
+    const report = await runReconciliation({ repair: true });
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /reconciliation/audit -- append-only audit trail, optionally filtered by
+// user_address. Paginated via ?limit (default 100, max 500) and ?offset.
 app.get('/reconciliation/audit', (req, res) => {
-  const userAddress = req.query.user_address as string | undefined;
-  res.json({ entries: getAuditLog(userAddress) });
+  const rawUserAddress = req.query.user_address;
+  if (rawUserAddress !== undefined && typeof rawUserAddress !== 'string') {
+    return res.status(400).json({ error: 'user_address must be a single string value' });
+  }
+
+  const MAX_LIMIT = 500;
+  const DEFAULT_LIMIT = 100;
+  let limit = DEFAULT_LIMIT;
+  if (typeof req.query.limit === 'string') {
+    const parsed = parseInt(req.query.limit, 10);
+    if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(parsed, MAX_LIMIT);
+  }
+  let offset = 0;
+  if (typeof req.query.offset === 'string') {
+    const parsed = parseInt(req.query.offset, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) offset = parsed;
+  }
+
+  const all = getAuditLog(rawUserAddress);
+  const page = all.slice(offset, offset + limit);
+  res.json({ entries: page, total: all.length, limit, offset });
 });
 
 // List agents from registry
