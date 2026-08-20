@@ -19,6 +19,13 @@ import {
   scValToNative,
   xdr,
 } from '@stellar/stellar-sdk';
+import {
+  errorFromSimulation,
+  errorFromSendResponse,
+  errorFromFailedTransaction,
+} from './vault-errors.js';
+
+export { VaultErrorCode, VaultContractError } from './vault-errors.js';
 
 const CONTRACT_ID = process.env.AGENT_VAULT_CONTRACT_ID ?? '';
 const RPC_URL = process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org';
@@ -72,7 +79,7 @@ async function buildUnsignedXdr(
 
   const simulated = await server.simulateTransaction(tx);
   if (SorobanRpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
+    throw errorFromSimulation(simulated);
   }
 
   return SorobanRpc.assembleTransaction(tx, simulated).build().toXDR();
@@ -97,7 +104,7 @@ async function signAndSubmit(keypair: Keypair, method: string, args: xdr.ScVal[]
 
   const simulated = await server.simulateTransaction(tx);
   if (SorobanRpc.Api.isSimulationError(simulated)) {
-    throw new Error(`Simulation failed: ${simulated.error}`);
+    throw errorFromSimulation(simulated);
   }
 
   tx = SorobanRpc.assembleTransaction(tx, simulated).build();
@@ -105,7 +112,7 @@ async function signAndSubmit(keypair: Keypair, method: string, args: xdr.ScVal[]
 
   const response = await server.sendTransaction(tx);
   if (response.status === 'ERROR') {
-    throw new Error(`Send failed: ${JSON.stringify(response.errorResult)}`);
+    throw errorFromSendResponse(response);
   }
 
   return pollForConfirmation(server, response.hash);
@@ -119,7 +126,7 @@ async function pollForConfirmation(server: SorobanRpc.Server, hash: string): Pro
       return hash;
     }
     if (result.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-      throw new Error(`Transaction failed: ${hash}`);
+      throw errorFromFailedTransaction(hash, result);
     }
   }
   throw new Error(`Transaction timed out: ${hash}`);
@@ -132,7 +139,7 @@ export async function submitSignedXdr(signedXdr: string): Promise<string> {
   const tx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
   const response = await server.sendTransaction(tx);
   if (response.status === 'ERROR') {
-    throw new Error(`Send failed: ${JSON.stringify(response.errorResult)}`);
+    throw errorFromSendResponse(response);
   }
   return pollForConfirmation(server, response.hash);
 }
@@ -226,14 +233,14 @@ export async function createTask(
 
     const simulated = await server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simulated)) {
-      throw new Error(`Simulation failed: ${simulated.error}`);
+      throw errorFromSimulation(simulated);
     }
 
     tx = SorobanRpc.assembleTransaction(tx, simulated).build();
     tx.sign(orchestratorKeypair);
 
     const response = await server.sendTransaction(tx);
-    if (response.status === 'ERROR') throw new Error(`Send failed`);
+    if (response.status === 'ERROR') throw errorFromSendResponse(response);
 
     await pollForConfirmation(server, response.hash);
 

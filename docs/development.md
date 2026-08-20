@@ -333,6 +333,20 @@ cargo fmt
 cargo clippy -- -D warnings
 ```
 
+### Vault error code sync
+
+`packages/orchestrator/src/vault-errors.ts` mirrors the contract's
+`#[contracterror] VaultError` enum (`contracts/agent-vault/src/lib.rs`) as a
+TypeScript `VaultErrorCode` enum, so a failed vault call can be surfaced to
+callers as a typed `VaultContractError` (`code`, `codeName`, `known`, `raw`)
+instead of an opaque string.
+
+`packages/orchestrator/src/vault-errors.test.ts` parses `lib.rs` directly and
+asserts every variant name and discriminant matches `VaultErrorCode` exactly,
+this runs as part of `npm test` and fails CI if the two drift apart. When you
+add or renumber a `VaultError` variant in the contract, update
+`VaultErrorCode` in the same PR or this test will fail.
+
 ## Linting and formatting
 
 ESLint (TypeScript) and Prettier are configured at the repo root and apply to
