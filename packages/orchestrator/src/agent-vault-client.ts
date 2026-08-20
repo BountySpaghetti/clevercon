@@ -23,6 +23,7 @@ import {
   errorFromSimulation,
   errorFromSendResponse,
   errorFromFailedTransaction,
+  VaultContractError,
 } from './vault-errors.js';
 
 export { VaultErrorCode, VaultContractError } from './vault-errors.js';
@@ -256,7 +257,16 @@ export async function createTask(
   }
 }
 
-/** Returns tx hash on success, null on failure (or if vault inactive). */
+/**
+ * Returns tx hash on success, null on failure (or if vault inactive).
+ *
+ * Re-throws `VaultContractError` (a genuine contract revert — e.g.
+ * `TaskAlreadyCompleted`, `ExceedsPlanCost`) so the caller can branch on
+ * `err.code`; its only caller (`executor.ts`) already treats a failed
+ * release as fatal to the step either way, so this only sharpens the
+ * failure reason, it doesn't change control flow. Non-contract failures
+ * (RPC hiccups, etc.) are still swallowed to `null`.
+ */
 export async function releasePayment(
   orchestratorKeypair: Keypair,
   taskId: bigint,
@@ -275,6 +285,7 @@ export async function releasePayment(
     return hash;
   } catch (err: any) {
     console.error('[AgentVault] releasePayment error:', err.message);
+    if (err instanceof VaultContractError) throw err;
     return null;
   }
 }
