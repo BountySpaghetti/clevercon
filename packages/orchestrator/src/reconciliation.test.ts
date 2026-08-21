@@ -30,18 +30,17 @@ vi.mock('./vault-ledger.js', () => ({
 import { getAccount } from './agent-vault-client.js';
 import * as orchestratorStore from './orchestrator-store.js';
 import { getAllVaultTx, appendVaultTx } from './vault-ledger.js';
-import {
-  computeUserDrift,
-  runReconciliation,
-  getReconciliationSummary,
-} from './reconciliation.js';
+import { computeUserDrift, runReconciliation, getReconciliationSummary } from './reconciliation.js';
 
 const USER = 'GABC123';
 
 function ledgerEntry(
   type: 'deposit' | 'withdrawal' | 'payment' | 'budget_lock' | 'adjustment',
   amount: number,
-  extra: { adjustment_target?: 'balance' | 'spent'; adjustment_direction?: 'increase' | 'decrease' } = {},
+  extra: {
+    adjustment_target?: 'balance' | 'spent';
+    adjustment_direction?: 'increase' | 'decrease';
+  } = {},
 ) {
   return {
     id: 'x',
@@ -137,7 +136,10 @@ describe('computeUserDrift', () => {
     vi.mocked(getAllVaultTx).mockReturnValue([
       ledgerEntry('deposit', 100),
       ledgerEntry('payment', 20),
-      ledgerEntry('adjustment', 5, { adjustment_target: 'spent', adjustment_direction: 'increase' }),
+      ledgerEntry('adjustment', 5, {
+        adjustment_target: 'spent',
+        adjustment_direction: 'increase',
+      }),
     ]);
     vi.mocked(getAccount).mockResolvedValue({
       balance: 80,
@@ -268,8 +270,14 @@ describe('runReconciliation', () => {
     vi.mocked(getAllVaultTx).mockReturnValueOnce([
       ledgerEntry('deposit', 100),
       ledgerEntry('payment', 20),
-      ledgerEntry('adjustment', 30, { adjustment_target: 'balance', adjustment_direction: 'decrease' }),
-      ledgerEntry('adjustment', 5, { adjustment_target: 'spent', adjustment_direction: 'increase' }),
+      ledgerEntry('adjustment', 30, {
+        adjustment_target: 'balance',
+        adjustment_direction: 'decrease',
+      }),
+      ledgerEntry('adjustment', 5, {
+        adjustment_target: 'spent',
+        adjustment_direction: 'increase',
+      }),
     ]);
 
     vi.mocked(appendVaultTx).mockClear();
