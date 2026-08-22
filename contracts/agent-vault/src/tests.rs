@@ -3461,7 +3461,9 @@ fn setup_fee_task(test_env: &TestEnv, plan_cost: i128) -> (Address, Address, u64
     let user = Address::generate(&test_env.env);
     let orchestrator = Address::generate(&test_env.env);
     test_env.token_admin_client.mint(&user, &plan_cost);
-    test_env.client.deposit(&user, &test_env.usdc_sac, &plan_cost);
+    test_env
+        .client
+        .deposit(&user, &test_env.usdc_sac, &plan_cost);
     test_env.client.register_orchestrator(
         &user,
         &orchestrator,
@@ -3509,9 +3511,7 @@ fn test_set_fee_exceeds_cap() {
     let test_env = setup_test();
     test_env.client.init(&test_env.admin, &test_env.usdc_sac);
 
-    let result = test_env
-        .client
-        .try_set_fee(&test_env.admin, &1001, &None);
+    let result = test_env.client.try_set_fee(&test_env.admin, &1001, &None);
     assert!(result == Err(Ok(VaultError::FeeBpsExceedsCap)));
 }
 
@@ -3564,10 +3564,7 @@ fn test_release_payment_fee_accrual() {
     // Orchestrator receives 990
     assert_eq!(test_env.token_client.balance(&orchestrator), 990);
     // 10 stays in contract, accrued for recipient
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        10
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 10);
 }
 
 // 18g. claim_fees — transfers accrued fees and zeroes the balance
@@ -3588,21 +3585,13 @@ fn test_claim_fees() {
         .client
         .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &5_000);
 
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        100
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 100);
 
-    let claimed = test_env
-        .client
-        .claim_fees(&recipient, &test_env.usdc_sac);
+    let claimed = test_env.client.claim_fees(&recipient, &test_env.usdc_sac);
     assert_eq!(claimed, 100);
     assert_eq!(test_env.token_client.balance(&recipient), 100);
     // Accrual zeroed after claim
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        0
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 0);
 }
 
 // 18h. claim_fees — no-op when nothing accrued returns NoFeesAccrued
@@ -3668,10 +3657,7 @@ fn test_zero_fee_no_deduction() {
 
     // Orchestrator receives full amount; nothing accrued
     assert_eq!(test_env.token_client.balance(&orchestrator), 1_000);
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        0
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 0);
 }
 
 // 18k. Zero-fee path — fee set but recipient is None
@@ -3690,10 +3676,7 @@ fn test_fee_no_recipient_no_deduction() {
         .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &1_000);
 
     assert_eq!(test_env.token_client.balance(&orchestrator), 1_000);
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        0
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 0);
 }
 
 // 18l. Dust: amount so small fee rounds to 0 — orchestrator gets full amount
@@ -3715,10 +3698,7 @@ fn test_fee_dust_rounds_to_zero() {
         .release_payment(&orchestrator, &task_id, &1, &test_env.usdc_sac, &9);
 
     assert_eq!(test_env.token_client.balance(&orchestrator), 9);
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        0
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 0);
 }
 
 // 18m. Recipient equals orchestrator — allowed by spec
@@ -3740,10 +3720,7 @@ fn test_fee_recipient_is_orchestrator() {
 
     // Orchestrator payout = 9900, fee accrued = 100
     assert_eq!(test_env.token_client.balance(&orchestrator), 9_900);
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        100
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 100);
 }
 
 // 18n. Cumulative accrual across multiple releases
@@ -3762,15 +3739,16 @@ fn test_fee_cumulative_accrual() {
     let (_, orchestrator, task_id) = setup_fee_task(&test_env, 3_000);
     // Three releases of 1000 each: fee per release = 20; total = 60
     for step_id in 1u64..=3 {
-        test_env
-            .client
-            .release_payment(&orchestrator, &task_id, &step_id, &test_env.usdc_sac, &1_000);
+        test_env.client.release_payment(
+            &orchestrator,
+            &task_id,
+            &step_id,
+            &test_env.usdc_sac,
+            &1_000,
+        );
     }
 
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        60
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 60);
     // Orchestrator received 980 × 3 = 2940
     assert_eq!(test_env.token_client.balance(&orchestrator), 2_940);
 }
@@ -3798,9 +3776,13 @@ fn test_fee_accounting_invariant() {
     let mut total_released = 0i128;
     let mut expected_fees = 0i128;
     for (step_id, &r) in releases.iter().enumerate() {
-        test_env
-            .client
-            .release_payment(&orchestrator, &task_id, &((step_id + 1) as u64), &test_env.usdc_sac, &r);
+        test_env.client.release_payment(
+            &orchestrator,
+            &task_id,
+            &((step_id + 1) as u64),
+            &test_env.usdc_sac,
+            &r,
+        );
         let fee = r * bps / 10_000;
         expected_fees += fee;
         total_released += r;
@@ -3818,7 +3800,10 @@ fn test_fee_accounting_invariant() {
     // fees accrued match our expected sum
     assert_eq!(accrued, expected_fees);
     // contract balance decreased by exactly total_released - fees (fees stay in contract)
-    assert_eq!(contract_before - contract_after, total_released - expected_fees);
+    assert_eq!(
+        contract_before - contract_after,
+        total_released - expected_fees
+    );
     // The full invariant: payout + fees + refund == plan_cost
     assert_eq!(orchestrator_balance + accrued + refund, plan_cost);
 
@@ -3861,8 +3846,5 @@ fn test_fee_change_not_retroactive() {
         .release_payment(&orchestrator, &task_id, &2, &test_env.usdc_sac, &1_000);
     // Total orchestrator: 1000 (full, no fee) + 900 (after 10% fee) = 1900
     assert_eq!(test_env.token_client.balance(&orchestrator), 1_900);
-    assert_eq!(
-        test_env.client.get_accrued_fees(&test_env.usdc_sac),
-        100
-    );
+    assert_eq!(test_env.client.get_accrued_fees(&test_env.usdc_sac), 100);
 }

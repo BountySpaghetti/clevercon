@@ -916,9 +916,7 @@ impl AgentVault {
         // making the zero-fee code path byte-for-byte equivalent to the
         // previous behavior.
         let fee = Self::compute_fee(&env, amount);
-        let orchestrator_payout = amount
-            .checked_sub(fee)
-            .expect("fee arithmetic underflow");
+        let orchestrator_payout = amount.checked_sub(fee).expect("fee arithmetic underflow");
 
         token_client.transfer(
             &env.current_contract_address(),
@@ -935,14 +933,8 @@ impl AgentVault {
             {
                 if let Some(ref recipient) = fee_config.recipient {
                     let fee_key = DataKey::AccruedFees(asset.clone());
-                    let current: i128 = env
-                        .storage()
-                        .instance()
-                        .get(&fee_key)
-                        .unwrap_or(0i128);
-                    let new_accrued = current
-                        .checked_add(fee)
-                        .expect("fee accrual overflow");
+                    let current: i128 = env.storage().instance().get(&fee_key).unwrap_or(0i128);
+                    let new_accrued = current.checked_add(fee).expect("fee accrual overflow");
                     env.storage().instance().set(&fee_key, &new_accrued);
 
                     FeeAccruedEvent {
@@ -1216,9 +1208,7 @@ impl AgentVault {
             bps,
             recipient: recipient.clone(),
         };
-        env.storage()
-            .instance()
-            .set(&DataKey::FeeConfig, &config);
+        env.storage().instance().set(&DataKey::FeeConfig, &config);
         Self::extend_instance_ttl(&env);
 
         FeeSetEvent {
@@ -1259,11 +1249,7 @@ impl AgentVault {
     /// Only the configured recipient may call this. Fails with
     /// `NoFeesAccrued` if there is nothing to claim (prevents a no-op
     /// transfer). Zeroes the accrual after the transfer.
-    pub fn claim_fees(
-        env: Env,
-        recipient: Address,
-        asset: Address,
-    ) -> Result<i128, VaultError> {
+    pub fn claim_fees(env: Env, recipient: Address, asset: Address) -> Result<i128, VaultError> {
         recipient.require_auth();
         Self::require_not_paused(&env)?;
 
@@ -1280,11 +1266,7 @@ impl AgentVault {
         }
 
         let fee_key = DataKey::AccruedFees(asset.clone());
-        let accrued: i128 = env
-            .storage()
-            .instance()
-            .get(&fee_key)
-            .unwrap_or(0);
+        let accrued: i128 = env.storage().instance().get(&fee_key).unwrap_or(0);
 
         if accrued == 0 {
             return Err(VaultError::NoFeesAccrued);
