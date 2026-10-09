@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     include: ['packages/**/src/**/*.test.ts', 'services/**/src/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**', 'packages/dashboard/**'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
     // DB integration tests share one Postgres instance, so run files serially
     // when they are enabled. Pure unit runs keep full file parallelism.
     fileParallelism: !process.env.TEST_DATABASE_URL,

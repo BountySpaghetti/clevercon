@@ -7,13 +7,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build:dashboard": "cd packages/dashboard && ../../node_modules/.bin/vite build",
     "build:web": "cd apps/web && ../../node_modules/.bin/tsc --noEmit && ../../node_modules/.bin/vite build",
     "setup-wallets": "npx tsx scripts/setup-wallets.ts",
     "fund-testnet-usdc": "npx tsx scripts/fund-testnet-usdc.ts",
     "add-usdc-trustlines": "npx tsx scripts/add-usdc-trustlines.ts",
     "distribute-usdc": "npx tsx scripts/distribute-usdc.ts",
-    "build": "npm run build:dashboard && npm run build:web",
+    "build": "npm run build:web",
     "typecheck": "bash scripts/typecheck.sh",
     "lint": "eslint .",
     "format": "prettier --write .",

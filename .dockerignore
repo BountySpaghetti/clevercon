@@ -16,6 +16,6 @@ wallets.json
 # Rust build artifacts (huge)
 contracts/*/target
 circuits/*/target
-# Note: apps/web + packages/dashboard sources are kept in the context because npm
-# workspaces need every package.json present for `npm ci`. They are not run by the
-# backend image; the frontend deploys separately (Cloudflare Pages).
+# Note: apps/web sources are kept in the context because npm workspaces need every
+# package.json present for `npm ci`. It is not run by the backend image; the
+# frontend deploys separately (Cloudflare Pages).

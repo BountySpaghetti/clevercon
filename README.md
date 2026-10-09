@@ -150,7 +150,7 @@ clevercon/
 └── docs/                      architecture, private-policies spec, development
 ```
 
-Public demo: [`packages/dashboard`](packages/dashboard) is a lightweight wallet-and-vault demo deployed on Vercel (contract-direct, no backend). The earlier hackathon stack (an Express orchestrator, a JSON registry, sample agents, and the budget-guardian contract) has been removed to keep the repo focused on the product; it remains in the git history.
+The earlier hackathon stack (an Express orchestrator, a JSON registry, sample agents, and the budget-guardian contract) has been removed to keep the repo focused on the product; it remains in the git history.
 
 ## Tech stack
 
@@ -191,7 +191,7 @@ npm run dev -w @clevercon/indexer    # on-chain event ingestion
 npm run dev -w @clevercon/web        # app on :5173
 ```
 
-See [docs/development.md](docs/development.md) for the full environment and the reference provider. The public Vercel demo runs from `packages/dashboard` and talks to the contract directly, with no backend required.
+See [docs/development.md](docs/development.md) for the full environment and the reference provider. `apps/web` has a backendless demo mode (`VITE_BACKEND=demo`) for a no-backend preview, and deploys to Cloudflare Pages.
 
 ### Use it from an AI agent (MCP)
 

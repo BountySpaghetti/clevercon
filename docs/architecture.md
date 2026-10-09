@@ -12,10 +12,9 @@ party, and the platform never holds your funds.
 
 > The earlier hackathon stack (an Express `orchestrator` + JSON `registry` + the
 > `packages/agents/*` samples + `contracts/budget-guardian`) has been **removed**
-> from the repo to keep it focused; it remains in the git history. `packages/dashboard`
-> is kept as the public Vercel demo. This document describes the production stack:
-> `apps/web`, `services/*`, `packages/*`, and the deployed CleverVault +
-> PolicyVerifier + Registry contracts.
+> from the repo to keep it focused; it remains in the git history. This document
+> describes the production stack: `apps/web`, `services/*`, `packages/*`, and the
+> deployed CleverVault + PolicyVerifier + Registry contracts.
 
 ## System overview
 

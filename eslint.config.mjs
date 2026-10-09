@@ -7,9 +7,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/node_modules/**',
-      'packages/dashboard/**',
       'apps/web/**',
-      'packages/orchestrator/public/**',
       'packages/mcp/test-server.mjs',
       'scripts/build-test-proof.mjs',
       'data/**',

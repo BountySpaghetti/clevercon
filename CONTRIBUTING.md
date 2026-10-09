@@ -93,9 +93,9 @@ npm run dev -w @clevercon/web        # dApp on :5173
 ```
 
 The whole money loop can be exercised headlessly with `npx tsx scripts/e2e-testnet.ts`
-(no browser). The public Vercel demo builds from `packages/dashboard` and needs no
-backend. See [docs/development.md](docs/development.md) for the reference provider and
-the full environment.
+(no browser). `apps/web` has a backendless demo mode (`VITE_BACKEND=demo`) for a
+no-backend preview. See [docs/development.md](docs/development.md) for the reference
+provider and the full environment.
 
 To seed the database with sample services and data:
 

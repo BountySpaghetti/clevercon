@@ -45,16 +45,15 @@ In scope:
   API key is bounded by policy.
 - The private spending-policy layer (proof verification, policy commitments, and
   replay/nullifier handling), including the `circuits/spend-policy` Noir circuit.
-- `scripts/*` and CI/deployment configuration (`vercel.json`, `.github/workflows/*`).
+- `scripts/*` and CI/deployment configuration (the `Dockerfile`, `.github/workflows/*`).
 
 Out of scope:
 
-- `packages/dashboard` (the React frontend) and general UI/UX issues. Please
-  still report these, but they are a lower priority during the current
-  backend-hardening phase.
+- General UI/UX issues in `apps/web`. Please still report these, but they are a
+  lower priority during the current backend-hardening phase.
 - Third-party services CleverCon depends on (the Stellar network itself, the
-  x402 facilitator, Anthropic's API, Render). Report these to their respective
-  maintainers.
+  x402 facilitator, Anthropic's API, the host platform). Report these to their
+  respective maintainers.
 - Issues that require a compromised local environment or physical access to a
   user's machine.
 
