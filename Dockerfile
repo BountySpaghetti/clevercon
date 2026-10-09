@@ -1,7 +1,10 @@
 # One image for all three backend services (api, workers, indexer). Each Railway
 # service builds from this Dockerfile and overrides the start command (see
 # deploy/DEPLOY.md). Debian (not Alpine) so Prisma's engine + openssl work.
-FROM node:20-bookworm-slim
+# Pulled from the AWS ECR public mirror of the Docker Official Images (identical
+# to docker.io/library/node) to dodge Docker Hub's anonymous pull rate limit,
+# which 429s shared CI builders like Railway's.
+FROM public.ecr.aws/docker/library/node:20-bookworm-slim
 
 WORKDIR /app
 
