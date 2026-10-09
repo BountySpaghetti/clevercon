@@ -23,6 +23,19 @@ async function main(): Promise<void> {
   const indexer = new Indexer(prisma);
   const filters = [{ type: 'contract' as const, contractIds: cfg.contractIds }];
 
+  // Soroban RPC's getEvents requires a startLedger (or a cursor). On a fresh
+  // deploy there is no stored cursor, and INDEXER_START_LEDGER is usually unset,
+  // so default to the current latest ledger: begin watching from "now" instead
+  // of throwing on every poll with an undefined startLedger.
+  let startLedger = cfg.startLedger;
+  if (startLedger === undefined && !(await indexer.getCursor(STREAM_KEY))) {
+    const latest = await server.getLatestLedger();
+    startLedger = latest.sequence;
+    console.log(
+      `[indexer] no cursor or INDEXER_START_LEDGER; starting from latest ledger ${startLedger}`,
+    );
+  }
+
   console.log(
     `[indexer] polling ${cfg.contractIds.length} contract(s) every ${cfg.pollIntervalMs}ms`,
   );
@@ -33,7 +46,7 @@ async function main(): Promise<void> {
       const request = (
         cursor
           ? { filters, cursor, limit: 100 }
-          : { filters, startLedger: cfg.startLedger, limit: 100 }
+          : { filters, startLedger, limit: 100 }
       ) as SorobanRpc.Api.GetEventsRequest;
 
       const res = await server.getEvents(request);
