@@ -9,7 +9,6 @@
   "scripts": {
     "build:dashboard": "cd packages/dashboard && ../../node_modules/.bin/vite build",
     "build:web": "cd apps/web && ../../node_modules/.bin/tsc --noEmit && ../../node_modules/.bin/vite build",
-    "bootstrap": "npx tsx scripts/bootstrap.ts",
     "setup-wallets": "npx tsx scripts/setup-wallets.ts",
     "fund-testnet-usdc": "npx tsx scripts/fund-testnet-usdc.ts",
     "add-usdc-trustlines": "npx tsx scripts/add-usdc-trustlines.ts",
