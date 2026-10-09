@@ -42,8 +42,10 @@ async function bootstrap(): Promise<void> {
   // rate limiter keys on the real client IP (X-Forwarded-For) not the proxy's.
   const trustProxy = config.get('TRUST_PROXY', { infer: true });
   if (trustProxy > 0) app.set('trust proxy', trustProxy);
-  const port = config.get('API_PORT', { infer: true });
-  await app.listen(port);
+  // Hosts like Railway/Render inject the port to bind on via $PORT; honor it,
+  // falling back to API_PORT for local runs. Bind all interfaces for containers.
+  const port = Number(process.env.PORT) || config.get('API_PORT', { infer: true });
+  await app.listen(port, '0.0.0.0');
   app
     .get(Logger)
     .log(

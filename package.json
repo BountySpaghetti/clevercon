@@ -29,7 +29,8 @@
     "db:studio": "prisma studio --schema packages/db/prisma/schema.prisma",
     "db:seed": "tsx packages/db/prisma/seed.ts",
     "setup": "cp -n .env.example .env || true && (npm run db:up || echo 'Docker unavailable — using an existing local Postgres (set DATABASE_URL in .env)') && npm run db:generate && npm run db:push && npm run db:seed",
-    "postinstall": "npm run db:generate && npm run db:build"
+    "postinstall": "npm run db:generate && npm run db:build",
+    "db:deploy": "prisma db push --schema packages/db/prisma/schema.prisma --accept-data-loss"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -45,7 +46,8 @@
     "typescript": "^5.4.0",
     "typescript-eslint": "^8.61.0",
     "vite": "^5.4.0",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "prisma": "6.19.3"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1",
