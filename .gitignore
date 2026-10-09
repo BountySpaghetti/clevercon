@@ -34,3 +34,6 @@ Thumbs.db
 circuits/*/target/
 .env.local
 .env.*.local
+
+# Local-only internal runbook (deploy + grant/credits steps; not for GitHub)
+deploy/DEPLOY.md
