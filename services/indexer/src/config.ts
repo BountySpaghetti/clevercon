@@ -28,9 +28,19 @@ export function loadConfig(env: Record<string, unknown> = process.env): IndexerC
     throw new Error(`Invalid indexer configuration:\n${issues}`);
   }
   const c = parsed.data;
+  const isMainnet = process.env.NETWORK === 'mainnet' || process.env.NETWORK === 'public';
+  const sorobanRpcUrl =
+    c.SOROBAN_RPC_URL ??
+    c.STELLAR_RPC_URL ??
+    (isMainnet ? '' : 'https://soroban-testnet.stellar.org');
+  if (isMainnet && (!sorobanRpcUrl || /testnet/i.test(sorobanRpcUrl))) {
+    throw new Error(
+      'NETWORK=mainnet but SOROBAN_RPC_URL/STELLAR_RPC_URL is missing or points at testnet',
+    );
+  }
   return {
     databaseUrl: c.DATABASE_URL,
-    sorobanRpcUrl: c.SOROBAN_RPC_URL ?? c.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org',
+    sorobanRpcUrl,
     contractIds: c.INDEXER_CONTRACT_IDS.split(',')
       .map((s) => s.trim())
       .filter(Boolean),

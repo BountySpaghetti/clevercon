@@ -79,5 +79,19 @@ export function validateEnv(config: Record<string, unknown>): AppEnv {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
-  return parsed.data;
+  const env = parsed.data;
+  // Fail fast if NETWORK=mainnet but testnet values were left in place.
+  if (env.NETWORK === 'mainnet') {
+    const bad: string[] = [];
+    if (/testnet/i.test(env.STELLAR_RPC_URL))
+      bad.push('STELLAR_RPC_URL must be a mainnet Soroban RPC');
+    if (env.NETWORK_PASSPHRASE.includes('Test SDF'))
+      bad.push('NETWORK_PASSPHRASE must be the public network passphrase');
+    if (env.USDC_SAC === 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA')
+      bad.push('USDC_SAC is the testnet contract');
+    if (bad.length > 0) {
+      throw new Error(`NETWORK=mainnet but testnet values are present:\n  - ${bad.join('\n  - ')}`);
+    }
+  }
+  return env;
 }

@@ -11,6 +11,8 @@ import {
   buildBindingProof,
   generateNullifier,
   createRedisMutex,
+  resolveNetwork,
+  assertNetworkConsistent,
   type RedisMutex,
 } from '@clevercon/common';
 import { logger } from './logger.js';
@@ -39,9 +41,18 @@ function withDelegate<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 function sorobanOpts(): SorobanOpts {
+  const net = resolveNetwork(process.env.NETWORK);
+  const passphrase = process.env.NETWORK_PASSPHRASE || net.passphrase;
+  const rpcUrl = process.env.STELLAR_RPC_URL || net.defaultSorobanRpcUrl;
+  // Fail before signing if NETWORK=mainnet but the config is still testnet.
+  assertNetworkConsistent(process.env.NETWORK, {
+    passphrase,
+    rpcUrl,
+    usdcSac: process.env.USDC_SAC,
+  });
   return {
-    rpcUrl: process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org',
-    passphrase: process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+    rpcUrl,
+    passphrase,
     contractId: process.env.AGENT_VAULT_CONTRACT_ID ?? '',
   };
 }
