@@ -55,10 +55,14 @@ jobs:
       - name: Generate the Groth16 fixture (real spend-policy circuit)
         run: |
           mkdir -p build
-          circom circuits/spend-policy-g16/policy_single.circom \
-            --r1cs --wasm --prime bls12381 -o build \
-            -l /tmp/clib/node_modules/circomlib/circuits
-          snarkjs powersoftau new bls12-381 13 build/pot_0.ptau -v
+          CLIB=/tmp/clib/node_modules/circomlib/circuits
+          # Hash oracle, used to build the allowlist Merkle witness off-circuit.
+          circom circuits/spend-policy-g16/poseidon2.circom --wasm --prime bls12381 -o build -l "$CLIB"
+          # The policy circuit itself.
+          circom circuits/spend-policy-g16/policy_single.circom --r1cs --wasm --prime bls12381 -o build -l "$CLIB"
+          # Build a satisfiable R1 + R3 + R5 witness (allowlist membership + per-payee cap).
+          node scripts/zk/build-ci-witness.cjs
+          snarkjs powersoftau new bls12-381 14 build/pot_0.ptau -v
           snarkjs powersoftau contribute build/pot_0.ptau build/pot_1.ptau \
             --name=ci -e="clevercon ci entropy 1"
           snarkjs powersoftau prepare phase2 build/pot_1.ptau build/pot_final.ptau -v
@@ -68,7 +72,7 @@ jobs:
           snarkjs zkey export verificationkey build/p_final.zkey build/vkey.json
           node build/policy_single_js/generate_witness.js \
             build/policy_single_js/policy_single.wasm \
-            circuits/spend-policy-g16/ci-input.json build/witness.wtns
+            build/policy-input.json build/witness.wtns
           snarkjs groth16 prove build/p_final.zkey build/witness.wtns \
             build/proof.json build/public.json
           node scripts/zk/gen-fixture.mjs build/vkey.json build/proof.json \

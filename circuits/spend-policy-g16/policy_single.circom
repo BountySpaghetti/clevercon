@@ -1,26 +1,53 @@
 pragma circom 2.1.0;
 
-// pp/2 single-release spend-policy circuit (increment g16-single), over
-// BLS12-381 so the proof is checked by a real pairing on-chain
-// (contracts/policy-verifier verify_groth16). See docs/private-policies-v2.md.
+// pp/2 single-release spend-policy circuit, over BLS12-381 so the proof is
+// checked by a real pairing on-chain (contracts/policy-verifier verify_groth16).
+// See docs/private-policies-v2.md.
 //
 // Public outputs (circuit-computed): commitment, nullifier.
 // Public inputs (vault-supplied):    payee_field, amount.
 //
-// This increment enforces R1 (per-payment ceiling) and binds the ENTIRE policy
-// encoding into the commitment (section 3), so the commitment format is final.
-// R3 (deep allowlist) and R5 (per-payee limit) land in the next increment with
-// their own witness construction and tests; their fields are already hashed in.
+// Rules enforced: R1 (per-payment ceiling), R3 (allowlist Merkle membership,
+// depth 16 = 65,536 payees), R5 (per-payee limit, carried in the allowlist
+// leaf). R2/R4/R6 fields are bound into the commitment and land in later
+// increments. The commitment binds the ENTIRE policy encoding (section 3), so
+// the commitment format is final.
 //
-// Hash: Poseidon. For this increment the circuit compiles with circomlib's
-// Poseidon over the BLS12-381 field; production pins BLS12-381-native Poseidon
-// constants (tracked in the package README) before the trusted setup.
+// Hash: Poseidon. This increment compiles circomlib's Poseidon over the
+// BLS12-381 field; production pins BLS12-381-native Poseidon constants (see the
+// package README) before the trusted setup.
 
 include "poseidon.circom";
 include "comparators.circom";
 include "bitify.circom";
 
-template PolicySingle() {
+// Recompute a Merkle root from a leaf and its authentication path. pathIndex[i]
+// is the leaf-or-sibling selector at level i (0 = current node is the left
+// child). Selection is arithmetic (degree 2), no external mux needed.
+template MerkleRoot(DEPTH) {
+    signal input leaf;
+    signal input pathElements[DEPTH];
+    signal input pathIndex[DEPTH];
+    signal output root;
+
+    component hashers[DEPTH];
+    signal cur[DEPTH + 1];
+    signal left[DEPTH];
+    signal right[DEPTH];
+    cur[0] <== leaf;
+    for (var i = 0; i < DEPTH; i++) {
+        pathIndex[i] * (pathIndex[i] - 1) === 0;
+        left[i] <== cur[i] + pathIndex[i] * (pathElements[i] - cur[i]);
+        right[i] <== pathElements[i] + pathIndex[i] * (cur[i] - pathElements[i]);
+        hashers[i] = Poseidon(2);
+        hashers[i].inputs[0] <== left[i];
+        hashers[i].inputs[1] <== right[i];
+        cur[i + 1] <== hashers[i].out;
+    }
+    root <== cur[DEPTH];
+}
+
+template PolicySingle(DEPTH) {
     // ---- public inputs (reconstructed by the vault from the real release) ----
     signal input payee_field;   // SHA-256(payee scval xdr) mod r
     signal input amount;        // stroops (u128)
@@ -40,6 +67,11 @@ template PolicySingle() {
     signal input salt;
     signal input spend_counter;
 
+    // ---- private witnesses: this release's allowlist membership ----
+    signal input r3_path[DEPTH];
+    signal input r3_index[DEPTH];
+    signal input payee_cap;     // per-payee limit (R5), bound inside the leaf
+
     // ---- public outputs (circuit-computed) ----
     signal output commitment;
     signal output nullifier;
@@ -57,7 +89,7 @@ template PolicySingle() {
     notEmpty.in <== ensum;
     notEmpty.out === 0;
 
-    // amount is range-bound to u128 so the comparison below is sound.
+    // amount is range-bound to u128 so the comparisons below are sound.
     component amountBits = Num2Bits(128);
     amountBits.in <== amount;
 
@@ -94,10 +126,31 @@ template PolicySingle() {
     commitment <== hc.out;
 
     // R1: if enabled, amount <= ceiling (inclusive). Neutral when disabled.
-    component le = LessEqThan(128);
-    le.in[0] <== amount;
-    le.in[1] <== r1_ceiling;
-    en[0] * (1 - le.out) === 0;
+    component le1 = LessEqThan(128);
+    le1.in[0] <== amount;
+    le1.in[1] <== r1_ceiling;
+    en[0] * (1 - le1.out) === 0;
+
+    // R3: if enabled, payee is in the allowlist. The leaf carries the per-payee
+    // cap (R5), so membership also binds that cap. Leaf = H(payee_field, cap).
+    component leafH = Poseidon(2);
+    leafH.inputs[0] <== payee_field;
+    leafH.inputs[1] <== payee_cap;
+    component mt = MerkleRoot(DEPTH);
+    mt.leaf <== leafH.out;
+    for (var i = 0; i < DEPTH; i++) {
+        mt.pathElements[i] <== r3_path[i];
+        mt.pathIndex[i] <== r3_index[i];
+    }
+    // en[2]==1 => computed root == committed root.
+    en[2] * (mt.root - r3_root) === 0;
+
+    // R5: per-payee limit. Requires R3 (the cap lives in the proven leaf).
+    en[4] * (1 - en[2]) === 0;
+    component le5 = LessEqThan(128);
+    le5.in[0] <== amount;
+    le5.in[1] <== payee_cap;
+    en[4] * (1 - le5.out) === 0;
 
     // Nullifier binds the release (spend-once, unlinkable to the rule).
     component hn = Poseidon(4);
@@ -108,4 +161,4 @@ template PolicySingle() {
     nullifier <== hn.out;
 }
 
-component main {public [payee_field, amount]} = PolicySingle();
+component main {public [payee_field, amount]} = PolicySingle(16);

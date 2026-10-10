@@ -19,22 +19,27 @@ the vault maps them by this order.
 
 ## Increments
 
-1. **g16-single** (this file): R1 (per-payment ceiling); binds the full policy
-   encoding into the commitment, so the commitment format is final. R3/R5 fields
-   are hashed in but not yet constrained.
-2. **g16-batch**: R3 (deep allowlist, depth 16) + R5 (per-payee limit) + batched
-   releases.
-3. **g16-extras**: R4 deny-list, R6 calendar windows, selective disclosure.
+1. **g16-single**: R1 (per-payment ceiling); binds the full policy encoding into
+   the commitment, so the commitment format is final. (proven)
+2. **g16 + allowlist** (current `policy_single.circom`): adds R3 (allowlist Merkle
+   membership, depth 16 = 65,536 payees) and R5 (per-payee limit, carried in the
+   leaf = `H(payee_field, cap)`; requires R3).
+3. **g16-batch**: batched releases (one proof authorizes N payments).
+4. **g16-extras**: R2 private accumulator, R4 deny-list, R6 calendar windows,
+   selective disclosure.
 
 ## How CI proves it
 
-The `zk-fixture` workflow compiles this circuit with `--prime bls12381`, runs a
-throwaway Groth16 setup, proves a satisfiable witness (`ci-input.json`), converts
-the VK/proof/public signals to Soroban bytes (`scripts/zk/gen-fixture.mjs`), and
-runs the Rust test (`contracts/policy-verifier/tests/groth16_fixture.rs`), which
-asserts the on-chain verifier accepts the proof and rejects a tampered public
-input. The setup here is for tests only; the production VK comes from an auditable
-multi-contributor ceremony.
+The `zk-fixture` workflow compiles this circuit with `--prime bls12381`, builds a
+satisfiable R1+R3+R5 witness with `scripts/zk/build-ci-witness.cjs` (which uses the
+compiled `poseidon2.circom` as a hash oracle to construct a real allowlist
+membership path, so the off-circuit tree matches the in-circuit Poseidon exactly),
+runs a throwaway Groth16 setup, proves, converts the VK/proof/public signals to
+Soroban bytes (`scripts/zk/gen-fixture.mjs`), and runs the Rust test
+(`contracts/policy-verifier/tests/groth16_fixture.rs`), which asserts the on-chain
+verifier accepts the proof and rejects a tampered public input. The setup here is
+for tests only; the production VK comes from an auditable multi-contributor
+ceremony.
 
 ## Known caveats (pre-production)
 
