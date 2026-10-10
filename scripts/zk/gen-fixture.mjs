@@ -5,8 +5,9 @@
 //
 //   node gen-fixture.mjs vkey.json proof.json public.json out/fixture_data.rs
 //
-// G2 Fp2 coordinate order is c0 || c1 (standard/EIP-2537). If the on-chain pairing
-// rejects a valid proof, that order is the first thing to flip.
+// snarkjs stores each Fp2 coordinate as [c0, c1]; Soroban's uncompressed G2
+// encoding (EIP-2537 style) wants the two limbs in the reverse order, so each
+// Fp2 pair is emitted as c1 || c0.
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const [, , vkeyPath, proofPath, publicPath, outPath] = process.argv;
@@ -21,8 +22,8 @@ const be = (dec, nbytes) => {
 };
 // G1 affine [x, y, 1] -> x(48) || y(48)
 const g1 = (p) => be(p[0], 48) + be(p[1], 48);
-// G2 affine [[x_c0, x_c1], [y_c0, y_c1], ...] -> x.c0 || x.c1 || y.c0 || y.c1
-const g2 = (p) => be(p[0][0], 48) + be(p[0][1], 48) + be(p[1][0], 48) + be(p[1][1], 48);
+// G2 affine [[x_c0, x_c1], [y_c0, y_c1], ...] -> x.c1 || x.c0 || y.c1 || y.c0
+const g2 = (p) => be(p[0][1], 48) + be(p[0][0], 48) + be(p[1][1], 48) + be(p[1][0], 48);
 
 const ic = vkey.IC.map(g1);
 const pubs = pub.map((d) => be(d, 32));
