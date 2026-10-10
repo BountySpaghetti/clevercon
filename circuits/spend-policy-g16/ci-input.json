@@ -1,0 +1,17 @@
+{
+  "payee_field": "12345678901234567890",
+  "amount": "60",
+  "en": ["1", "0", "0", "0", "0", "0"],
+  "r1_ceiling": "100",
+  "r2_cap": "0",
+  "r2_window": "0",
+  "r2_delegate": "0",
+  "r3_root": "0",
+  "r3_depth": "0",
+  "r4_entries": ["0", "0", "0", "0"],
+  "r4_threshold": "0",
+  "r6_windows_root": "0",
+  "category": "0",
+  "salt": "88442211556677",
+  "spend_counter": "0"
+}

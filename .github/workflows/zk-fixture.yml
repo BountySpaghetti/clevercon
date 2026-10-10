@@ -11,6 +11,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'circuits/spend-policy-g16/**'
       - 'scripts/zk/**'
       - 'contracts/policy-verifier/**'
       - '.github/workflows/zk-fixture.yml'
@@ -46,29 +47,32 @@ jobs:
           chmod +x /usr/local/bin/circom
           circom --version
 
-      - name: Install snarkjs
-        run: npm install -g snarkjs
+      - name: Install snarkjs and circomlib
+        run: |
+          npm install -g snarkjs
+          npm install --prefix /tmp/clib circomlib
 
-      - name: Generate the Groth16 fixture
-        working-directory: scripts/zk
+      - name: Generate the Groth16 fixture (real spend-policy circuit)
         run: |
           mkdir -p build
-          circom multiplier.circom --r1cs --wasm --prime bls12381 -o build
-          snarkjs powersoftau new bls12-381 10 build/pot_0.ptau -v
+          circom circuits/spend-policy-g16/policy_single.circom \
+            --r1cs --wasm --prime bls12381 -o build \
+            -l /tmp/clib/node_modules/circomlib/circuits
+          snarkjs powersoftau new bls12-381 13 build/pot_0.ptau -v
           snarkjs powersoftau contribute build/pot_0.ptau build/pot_1.ptau \
             --name=ci -e="clevercon ci entropy 1"
           snarkjs powersoftau prepare phase2 build/pot_1.ptau build/pot_final.ptau -v
-          snarkjs groth16 setup build/multiplier.r1cs build/pot_final.ptau build/mult_0.zkey
-          snarkjs zkey contribute build/mult_0.zkey build/mult_final.zkey \
+          snarkjs groth16 setup build/policy_single.r1cs build/pot_final.ptau build/p_0.zkey
+          snarkjs zkey contribute build/p_0.zkey build/p_final.zkey \
             --name=ci -e="clevercon ci entropy 2"
-          snarkjs zkey export verificationkey build/mult_final.zkey build/vkey.json
-          echo '{"a":"3","b":"11"}' > build/input.json
-          node build/multiplier_js/generate_witness.js \
-            build/multiplier_js/multiplier.wasm build/input.json build/witness.wtns
-          snarkjs groth16 prove build/mult_final.zkey build/witness.wtns \
+          snarkjs zkey export verificationkey build/p_final.zkey build/vkey.json
+          node build/policy_single_js/generate_witness.js \
+            build/policy_single_js/policy_single.wasm \
+            circuits/spend-policy-g16/ci-input.json build/witness.wtns
+          snarkjs groth16 prove build/p_final.zkey build/witness.wtns \
             build/proof.json build/public.json
-          node gen-fixture.mjs build/vkey.json build/proof.json build/public.json \
-            ../../contracts/policy-verifier/tests/fixture_data.rs
+          node scripts/zk/gen-fixture.mjs build/vkey.json build/proof.json \
+            build/public.json contracts/policy-verifier/tests/fixture_data.rs
 
       - name: Upload the generated fixture
         if: always()
