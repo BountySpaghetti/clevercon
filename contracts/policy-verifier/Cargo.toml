@@ -5,7 +5,14 @@ edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+# rlib so the tests/ integration test can link the crate as a library; the
+# release .wasm is still produced from the cdylib.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Compiles the Groth16/BLS12-381 verifier test against a CI-generated fixture.
+# Off by default so the normal contracts job (which has no fixture) skips it.
+zk-fixture = []
 
 [dependencies]
 soroban-sdk = { version = "25.3.0", features = ["alloc"] }

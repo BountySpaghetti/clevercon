@@ -41,7 +41,7 @@ extern crate alloc;
 
 mod encoding;
 mod error;
-mod groth16;
+pub mod groth16;
 mod types;
 mod verifier;
 

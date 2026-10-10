@@ -1,0 +1,87 @@
+name: ZK verifier fixture
+
+# Generates a REAL BLS12-381 Groth16 proof + verifying key with circom/snarkjs
+# (GitHub runners have the RAM and network the local sandbox lacks), converts it
+# to the Soroban uncompressed byte encoding, and runs the on-chain verifier test
+# against it. This is how we prove the policy-verifier Groth16 path actually
+# accepts valid proofs and rejects tampered ones.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/zk/**'
+      - 'contracts/policy-verifier/**'
+      - '.github/workflows/zk-fixture.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fixture:
+    name: Generate fixture and verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/policy-verifier
+
+      - name: Install circom
+        run: |
+          curl -sSL -o /usr/local/bin/circom \
+            https://github.com/iden3/circom/releases/latest/download/circom-linux-amd64
+          chmod +x /usr/local/bin/circom
+          circom --version
+
+      - name: Install snarkjs
+        run: npm install -g snarkjs
+
+      - name: Generate the Groth16 fixture
+        working-directory: scripts/zk
+        run: |
+          mkdir -p build
+          circom multiplier.circom --r1cs --wasm --prime bls12381 -o build
+          snarkjs powersoftau new bls12-381 10 build/pot_0.ptau -v
+          snarkjs powersoftau contribute build/pot_0.ptau build/pot_1.ptau \
+            --name=ci -e="clevercon ci entropy 1"
+          snarkjs powersoftau prepare phase2 build/pot_1.ptau build/pot_final.ptau -v
+          snarkjs groth16 setup build/multiplier.r1cs build/pot_final.ptau build/mult_0.zkey
+          snarkjs zkey contribute build/mult_0.zkey build/mult_final.zkey \
+            --name=ci -e="clevercon ci entropy 2"
+          snarkjs zkey export verificationkey build/mult_final.zkey build/vkey.json
+          echo '{"a":"3","b":"11"}' > build/input.json
+          node build/multiplier_js/generate_witness.js \
+            build/multiplier_js/multiplier.wasm build/input.json build/witness.wtns
+          snarkjs groth16 prove build/mult_final.zkey build/witness.wtns \
+            build/proof.json build/public.json
+          node gen-fixture.mjs build/vkey.json build/proof.json build/public.json \
+            ../../contracts/policy-verifier/tests/fixture_data.rs
+
+      - name: Upload the generated fixture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: groth16-fixture
+          path: contracts/policy-verifier/tests/fixture_data.rs
+          if-no-files-found: ignore
+
+      - name: Verify the proof on-chain (Rust)
+        run: >
+          cargo test
+          --manifest-path contracts/policy-verifier/Cargo.toml
+          --features zk-fixture
+          --test groth16_fixture
+          -- --nocapture
