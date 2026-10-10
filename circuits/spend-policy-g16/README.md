@@ -19,20 +19,23 @@ the vault maps them by this order.
 
 ## Increments
 
-1. **g16-single**: R1 (per-payment ceiling); binds the full policy encoding into
-   the commitment, so the commitment format is final. (proven)
-2. **g16 + allowlist** (current `policy_single.circom`): adds R3 (allowlist Merkle
+1. **g16-single** (`policy_single.circom`): R1, plus R3 (allowlist Merkle
    membership, depth 16 = 65,536 payees) and R5 (per-payee limit, carried in the
-   leaf = `H(payee_field, cap)`; requires R3).
-3. **g16-batch**: batched releases (one proof authorizes N payments).
-4. **g16-extras**: R2 private accumulator, R4 deny-list, R6 calendar windows,
+   leaf = `H(payee_field, cap)`; requires R3). Binds the full policy encoding into
+   the commitment, so the commitment format is final. (proven)
+2. **g16-batch** (`policy_batch.circom`, CI circuit): one proof authorizes N
+   releases (bounty payout, payroll run) under the same policy; per-release
+   R1/R3/R5 + N nullifiers + an `active` flag so a partial batch's null slots are
+   provable no-ops (nullifier 0, vault skips). Supersedes the single circuit for
+   the production path; the single remains as the N=1 reference.
+3. **g16-extras**: R2 private accumulator, R4 deny-list, R6 calendar windows,
    selective disclosure.
 
 ## How CI proves it
 
-The `zk-fixture` workflow compiles this circuit with `--prime bls12381`, builds a
-satisfiable R1+R3+R5 witness with `scripts/zk/build-ci-witness.cjs` (which uses the
-compiled `poseidon2.circom` as a hash oracle to construct a real allowlist
+The `zk-fixture` workflow compiles the batch circuit with `--prime bls12381`,
+builds a satisfiable batch witness with `scripts/zk/build-ci-witness.cjs` (which
+uses the compiled `poseidon2.circom` as a hash oracle to construct a real allowlist
 membership path, so the off-circuit tree matches the in-circuit Poseidon exactly),
 runs a throwaway Groth16 setup, proves, converts the VK/proof/public signals to
 Soroban bytes (`scripts/zk/gen-fixture.mjs`), and runs the Rust test
