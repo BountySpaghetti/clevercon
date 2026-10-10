@@ -14,9 +14,15 @@ import { Horizon, Asset } from '@stellar/stellar-sdk';
  */
 const PORT = Number(process.env.PROVIDER_PORT ?? 4200);
 const NAME = process.env.PROVIDER_NAME ?? 'stellar-market-oracle';
-const HORIZON_URL = process.env.HORIZON_URL ?? 'https://horizon-testnet.stellar.org';
+const IS_MAINNET = process.env.NETWORK === 'mainnet' || process.env.NETWORK === 'public';
+const HORIZON_URL =
+  process.env.HORIZON_URL ??
+  (IS_MAINNET ? 'https://horizon.stellar.org' : 'https://horizon-testnet.stellar.org');
 const USDC_ISSUER =
-  process.env.USDC_ISSUER ?? 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+  process.env.USDC_ISSUER ??
+  (IS_MAINNET
+    ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+    : 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5');
 
 const server = new Horizon.Server(HORIZON_URL);
 const USDC = new Asset('USDC', USDC_ISSUER);

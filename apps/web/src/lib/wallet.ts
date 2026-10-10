@@ -1,4 +1,5 @@
 import type { ISupportedWallet, StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
+import { IS_MAINNET } from './network';
 
 // The wallet kit (and its Stellar deps) is large and only needed once a user
 // actually connects or signs, so it is loaded lazily in its own chunk rather
@@ -15,7 +16,7 @@ function getKit(): Promise<StellarWalletsKit> {
   if (!kitPromise) {
     kitPromise = import('@creit.tech/stellar-wallets-kit').then((m) => {
       return new m.StellarWalletsKit({
-        network: m.WalletNetwork.TESTNET,
+        network: IS_MAINNET ? m.WalletNetwork.PUBLIC : m.WalletNetwork.TESTNET,
         modules: [
           new m.FreighterModule(),
           new m.xBullModule(),

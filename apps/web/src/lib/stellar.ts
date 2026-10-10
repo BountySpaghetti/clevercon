@@ -4,13 +4,11 @@ import { signTransaction } from './wallet';
 // USDC trustline. These are client-side Horizon calls (read-heavy, no custody),
 // adapted from the dashboard. Stellar SDK is dynamically imported so it stays out
 // of the eager bundle.
-const HORIZON = 'https://horizon-testnet.stellar.org';
-const USDC_CODE = 'USDC';
-const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
-const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
+import { HORIZON_URL, USDC_ISSUER, NETWORK_PASSPHRASE } from './network';
 
-export const explorerAccount = (address: string): string =>
-  `https://stellar.expert/explorer/testnet/account/${address}`;
+const USDC_CODE = 'USDC';
+
+export { explorerAccount } from './network';
 
 export interface WalletBalances {
   funded: boolean;
@@ -22,7 +20,7 @@ export interface WalletBalances {
 /** Read XLM and USDC balances (and trustline presence) for an address. */
 export async function getWalletBalances(address: string): Promise<WalletBalances> {
   const { Horizon } = await import('@stellar/stellar-sdk');
-  const server = new Horizon.Server(HORIZON);
+  const server = new Horizon.Server(HORIZON_URL);
   try {
     const acct = await server.loadAccount(address);
     const native = acct.balances.find((b) => b.asset_type === 'native');
@@ -47,16 +45,16 @@ export async function getWalletBalances(address: string): Promise<WalletBalances
 export async function addUsdcTrustline(address: string): Promise<void> {
   const { Horizon, TransactionBuilder, Operation, Asset, BASE_FEE } =
     await import('@stellar/stellar-sdk');
-  const server = new Horizon.Server(HORIZON);
+  const server = new Horizon.Server(HORIZON_URL);
   const account = await server.loadAccount(address);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: TESTNET_PASSPHRASE,
+    networkPassphrase: NETWORK_PASSPHRASE,
   })
     .addOperation(Operation.changeTrust({ asset: new Asset(USDC_CODE, USDC_ISSUER) }))
     .setTimeout(180)
     .build();
-  const signedXdr = await signTransaction(tx.toXDR(), TESTNET_PASSPHRASE);
-  const signed = TransactionBuilder.fromXDR(signedXdr, TESTNET_PASSPHRASE);
+  const signedXdr = await signTransaction(tx.toXDR(), NETWORK_PASSPHRASE);
+  const signed = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
   await server.submitTransaction(signed);
 }

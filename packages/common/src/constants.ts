@@ -26,7 +26,10 @@ export const XLM402_BASE = process.env.XLM402_BASE_URL || 'https://xlm402.com';
 export const XLM402_TESTNET_PREFIX = '/testnet';
 
 // Stellar Explorer
-export const EXPLORER_BASE = 'https://stellar.expert/explorer/testnet';
+export const EXPLORER_BASE =
+  process.env.NETWORK === 'mainnet' || process.env.NETWORK === 'public'
+    ? 'https://stellar.expert/explorer/public'
+    : 'https://stellar.expert/explorer/testnet';
 export const txExplorerUrl = (hash: string) => `${EXPLORER_BASE}/tx/${hash}`;
 export const accountExplorerUrl = (addr: string) => `${EXPLORER_BASE}/account/${addr}`;
 export const contractExplorerUrl = (id: string) => `${EXPLORER_BASE}/contract/${id}`;
