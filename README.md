@@ -18,6 +18,8 @@
 
 CleverCon lets you safely put an AI agent in charge of your money. You fund a non-custodial vault, set the limits it must obey (a budget, per-payment caps, an allowlist of who it may pay, time windows), optionally keep those limits private, then instruct your agent in plain terms to spend and disburse funds however serves your goal. The vault guarantees on-chain that the agent can never spend outside your rules or reveal them, and the platform never holds your funds.
 
+The vault holds your funds non-custodially and gates releases behind an on-chain policy proof tied to your committed rules, so the agent spends within your limits and the rules stay private. The platform never holds your funds.
+
 It is delegation with hard limits: the agent owns the decisions (who to pay, when, how much, by whatever logic you give it); the contract owns the guarantee (bounds, privacy, non-custody). **Hiring services is one application of this, not the whole thing.**
 
 Three things define it:
@@ -26,7 +28,7 @@ Three things define it:
 2. **The rules stay private.** Your caps, allowlist, and limits are committed and checked on-chain without being published: the ledger shows a payment was allowed without revealing the rule that allowed it. This is what transparent enforcers and escrows cannot do.
 3. **Useful from day one, no marketplace required.** Value is one-sided: a single developer with a single agent gets the full benefit immediately, even paying one address. There is no two-sided liquidity to bootstrap.
 
-It is live on Stellar testnet today: deployed contracts, a usable app, an SDK, and an MCP server that gives any AI agent a bounded, non-custodial spending account in minutes.
+It is live on Stellar testnet today at [clevercon.xyz](https://clevercon.xyz): deployed contracts, a usable app, an SDK, and an MCP server that gives any AI agent a bounded, non-custodial spending account in minutes.
 
 ## What you can use it for
 
