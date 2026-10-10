@@ -75,8 +75,8 @@ Toward mainnet:
   commitment scheme, public inputs, nullifier derivation, and threat model are
   frozen in [docs/private-policies.md](docs/private-policies.md).
 - **Full on-chain proof verification**: replace the binding check with real
-  pairing-based verification once Stellar exposes pairing precompiles, so soundness
-  is enforced on-chain rather than trusted off-chain.
+  on-chain verification using the chain's native curve operations, so soundness is
+  enforced on-chain rather than trusted off-chain.
 - **Security audit** of the contracts and API, plus disaster-recovery and
   monitoring hardening (secrets in a KMS, backups, alerting).
 - **Mainnet deploy** with a clear testnet/mainnet switch.
