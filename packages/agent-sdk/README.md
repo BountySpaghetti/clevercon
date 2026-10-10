@@ -1,57 +1,95 @@
 # @clevercon/agent-sdk
 
-The SDK for CleverCon. Four surfaces, pick what your agent needs:
+Give an AI agent a **private, non-custodial spending account on Stellar**, and an economy
+to use it in: pay, disburse, hire and pay services (x402/MPP), or **be** a paid service,
+all within limits only you set and no one else can see.
 
-1. **Spend** (`createSpender`) — a bounded, non-custodial spending account over the
-   CleverCon API: pay, disburse, hire, set limits, read budget and activity, with a
-   scoped API key. The agent spends but never overspends or pays outside your
-   policy, and never holds funds. **Start here if your agent needs to spend.**
-2. **Agent-key mode** (`createAgentWallet`) — the agent pulls working capital from
-   the vault into its own wallet (bounded by your policy) and pays **external** x402
-   services with it. Start here to reach services outside CleverCon.
-3. **Be a provider** (`createProvider`) — list a service the CleverCon hire flow
-   calls per step; the vault settles you on-chain after each step succeeds.
-4. **Standalone paid agent** (`createAgent`) — run your own x402 / MPP paywall and
-   charge callers directly, independent of the vault.
+Part of [CleverCon](https://clevercon.xyz). For a no-code MCP integration (Claude Desktop,
+Cursor), see [`@clevercon/mcp`](https://www.npmjs.com/package/@clevercon/mcp).
 
-The spending surfaces are on the package root; the provider is on a zero-dependency
-subpath (`@clevercon/agent-sdk/spender` is likewise dependency-free).
+## Install
+
+```bash
+npm install @clevercon/agent-sdk
+```
+
+ESM-only. Requires Node 18+. The spending surfaces (`createSpender`,
+`createAgentWallet`) have no heavy dependencies and use the global `fetch`.
+
+## Prerequisites (for the spending surfaces)
+
+1. Open the app at **https://clevercon.xyz** and connect a Stellar wallet (testnet).
+2. **Fund your vault** and authorize the agent once, in the app.
+3. In the **Developer console**, mint a scoped **API key** (`cc_<prefix>.<secret>`).
+
+The API base defaults to the live CleverCon API; set `CLEVERCON_API_URL` only if you
+self-host. The provider surfaces (`createProvider`, `createAgent`) do not need an API key.
+
+## The four surfaces, pick what your agent needs
+
+1. **Spend** (`createSpender`) — a bounded, non-custodial spending account: pay, disburse,
+   hire, set limits, read budget and activity, with a scoped API key. **Start here if your
+   agent needs to spend.**
+2. **Agent-key mode** (`createAgentWallet`) — the agent pulls working capital from the
+   vault into its own wallet (bounded by your policy) and pays **external** x402 services
+   with it. Start here to reach services outside CleverCon.
+3. **Be a provider** (`createProvider`) — list a service the CleverCon hire flow calls per
+   step; the vault settles you on-chain after each step succeeds.
+4. **Standalone paid agent** (`createAgent`) — run your own x402 / MPP paywall and charge
+   callers directly.
+
+The spending surfaces are on the package root; `@clevercon/agent-sdk/spender` and
+`@clevercon/agent-sdk/provider` are dependency-free subpaths.
 
 ## Spend (`createSpender`)
 
-A bounded, non-custodial spending account in a few calls. Zero runtime dependencies
-(global `fetch` only), keyed by a scoped API key (mint one in the dApp Developer
-console). Fund the vault and authorize Autopay once in the dApp; after that the
-agent spends autonomously within your limits.
+A bounded, non-custodial spending account in a few calls, keyed by a scoped API key.
+Fund the vault and authorize the agent once in the app; after that the agent spends
+autonomously within your limits.
 
 ```ts
 import { createSpender } from '@clevercon/agent-sdk/spender';
 
 const cc = createSpender({ apiKey: process.env.CLEVERCON_API_KEY! });
 
+// Pay one allowlisted address
 await cc.pay('G...PAYEE', 5, { reason: 'design work' });
+
+// Disburse to many in one bounded instruction
 await cc.disburse([
   { payee: 'G...A', amount: 2 },
   { payee: 'G...B', amount: 3 },
 ]);
+
+// Read the vault position and set a reusable private policy
 const { available } = await cc.getBudget();
 const limit = await cc.setLimit({ perPaymentCeilingUsdc: 10, allowlist: ['G...'] });
 ```
 
-- `pay(payee, amount, opts?)` / `disburse(lines, opts?)` — bounded by a saved limit
-  (`policyId`) or one derived from the payment itself (allowlist = the payees, cap =
-  the largest line). Pass `idempotencyKey` so a retried call returns the original
+**Methods**
+- `pay(payee, amount, opts?)` and `disburse(lines, opts?)` — bounded by a saved limit
+  (`policyId` in `opts`) or one derived from the payment itself (allowlist = the payees,
+  cap = the largest line). Pass `idempotencyKey` so a retried call returns the original
   spend instead of paying twice.
 - `hire(opts)` — hire a registered service (also takes `idempotencyKey`).
-- `getBudget()` / `getActivity()` / `setLimit(limit)` / `listLimits()`.
-- Errors throw `CleverConError` carrying the HTTP status (401 bad key, 429 quota).
+- `getBudget()` — `{ balance, available, locked }`.
+- `getActivity()` — recent jobs and payments.
+- `setLimit(limit)` — create a reusable policy; returns a `policyId`.
+- `listLimits()` — saved policies.
+
+Errors throw `CleverConError` carrying the HTTP status (401 bad key, 429 quota).
+
+**Options**
+- `apiKey` (required) — your scoped key.
+- `apiUrl` — API base. Defaults to `CLEVERCON_API_URL`, or the live CleverCon API.
+- `fetchImpl` — custom `fetch` (for tests or a non-global runtime).
 
 ## Agent-key mode (`createAgentWallet`)
 
-Unites the two non-custodial halves of an agent's economy: it PULLS working capital
-from the CleverCon vault (bounded on-chain by your policy) and SPENDS it
-autonomously on external x402 services. The platform never holds the agent's key,
-and both legs settle in the same USDC, so there is no swap between them.
+Unites the two non-custodial halves of an agent's economy: it **pulls** working capital
+from the vault (bounded on-chain by your policy) and **spends** it on external x402
+services. The platform never holds the agent's key, and both legs settle in the same
+USDC, so there is no swap between them.
 
 ```ts
 import { createAgentWallet } from '@clevercon/agent-sdk';
@@ -66,15 +104,13 @@ const res = await wallet.fetch(url, init); // pay an x402 service with those fun
 const { available } = await wallet.getBudget();
 ```
 
-See [`examples/x402-agent`](./examples/x402-agent) for a runnable end-to-end agent.
+See [`examples/x402-agent`](https://github.com/clevercon-protocol/clevercon/tree/main/packages/agent-sdk/examples/x402-agent)
+for a runnable end-to-end agent.
 
-The remaining two surfaces are for being paid, not spending:
+## Be a provider (`createProvider`)
 
-## Marketplace provider (`createProvider`)
-
-The smallest amount of glue that turns a function into a service the CleverCon
-marketplace can hire. Dependency-free (node:http only), so a provider is a
-single file with no framework. Import it from the lightweight subpath:
+The smallest glue that turns a function into a service the CleverCon marketplace can hire.
+Dependency-free (`node:http` only), so a provider is a single file with no framework.
 
 ```ts
 import { createProvider } from '@clevercon/agent-sdk/provider';
@@ -83,7 +119,6 @@ const provider = createProvider({
   name: 'price-oracle',
   port: 4200,
   async fulfill({ action, taskId }) {
-    // Do the actual work; the return value becomes the buyer's step output.
     const price = await lookupPrice(action);
     return { action, price, at: new Date().toISOString() };
   },
@@ -92,12 +127,13 @@ const provider = createProvider({
 provider.listen(); // POST / to fulfill, GET /health for liveness
 ```
 
-Register the service with its endpoint URL, and CleverCon does the rest.
+Then register the service with its endpoint URL in the app's Provider console, and
+CleverCon drives the rest.
 
 ### Fulfillment contract
 
-The worker (`services/workers` executor) drives your endpoint. `createProvider`
-implements this for you; it is documented here so you know exactly what runs:
+The CleverCon worker drives your endpoint. `createProvider` implements this for you; it
+is documented so you know exactly what runs:
 
 | Exchange | Detail |
 | --- | --- |
@@ -107,25 +143,22 @@ implements this for you; it is documented here so you know exactly what runs:
 | failure | non-`2xx` or a timeout (the worker aborts at 15s) fails the step |
 | `GET <endpoint>/health` | `{ status: 'ok', provider }` |
 
-- `fulfill({ action, taskId, body })`, `action` is the plan step, `taskId` is
-  the CleverCon task, `body` is the full parsed request. Return a string (sent
-  verbatim) or any object (JSON-encoded). **Throw to fail the step** (mapped to
-  HTTP 500, so the vault does not pay for it).
-- `provider.handle(req, res)`, the bare handler, to embed in an existing server
-  or test without a socket. `provider.listen(port?)` opens an http server.
+- `fulfill({ action, taskId, body })` — `action` is the plan step, `taskId` is the
+  CleverCon task, `body` is the full parsed request. Return a string (sent verbatim) or
+  any object (JSON-encoded). **Throw to fail the step** (mapped to HTTP 500, so the vault
+  does not pay for it).
+- `provider.handle(req, res)` — the bare handler, to embed in an existing server or test
+  without a socket. `provider.listen(port?)` opens an http server.
 
-The [`@clevercon/reference-provider`](../../services/reference-provider) service
-is this SDK's dogfood example: a real, hireable provider built on `createProvider`.
+The [`@clevercon/reference-provider`](https://github.com/clevercon-protocol/clevercon/tree/main/services/reference-provider)
+service is a real, hireable provider built on `createProvider`.
 
 ## Standalone paid agent (`createAgent`)
 
-Shared scaffolding for a specialist agent that runs its own paywall. Factors out
-the lifecycle such an agent otherwise re-implements by hand: an HTTP server with a
-manifest and health endpoint, an x402 or MPP paywall
-on the task endpoint, self-registration with the registry (retry/backoff +
-heartbeat), graceful deregistration, and feedback reporting.
-
-### Quickstart
+Scaffolding for a specialist agent that runs **its own paywall** and charges callers
+directly (independent of a CleverCon vault). It factors out the lifecycle: an HTTP server
+with a manifest and health endpoint, an x402 or MPP paywall on the task endpoint, optional
+self-registration with an agent registry, and feedback reporting.
 
 ```ts
 import 'dotenv/config';
@@ -156,64 +189,51 @@ That gives you:
 | --- | --- |
 | `GET /health` | `{ status: 'ok', agent, address, payment }` |
 | `GET /` | manifest: `{ agent, description, capabilities, pricing, stellar_address }` |
-| `POST /query` | paid task endpoint, x402/MPP paywall, then your `handler` |
+| `POST /query` | paid task endpoint: x402/MPP paywall, then your `handler` |
 
-On `listen()` the agent registers itself with the registry (`REGISTRY_URL`,
-default `http://localhost:4000`), retries on a `5s / 15s / 30s / 60s` backoff if
-the registry is not up yet, re-registers every 4 minutes, and deregisters on
-`SIGTERM` / `SIGINT`.
-
-## The handler
+### The handler
 
 ```ts
 handler: (task, ctx) => AgentResult | Promise<AgentResult>;
 ```
 
-- `task`, `{ body, query, context, req }`. `query` is `body.query` or
-  `body.instruction`; `context` is `body.context`. `req` is the raw Express
-  request.
-- `ctx`, `{ wallet: { publicKey }, payment, logger }`.
-- Return a plain value (wrapped as `{ result, agent, timestamp }`) or
-  `{ result, status }` to set the HTTP status. Throw to return
-  `{ error: message }` (status from `err.status`, else 500).
+- `task` — `{ body, query, context, req }`. `query` is `body.query` or `body.instruction`;
+  `context` is `body.context`; `req` is the raw Express request.
+- `ctx` — `{ wallet: { publicKey }, payment, logger }`.
+- Return a plain value (wrapped as `{ result, agent, timestamp }`) or `{ result, status }`
+  to set the HTTP status. Throw to return `{ error: message }` (status from `err.status`,
+  else 500).
 
-## Config
+### Config
 
 | Field | Default |
 | --- | --- |
 | `manifest`, `capabilities`, `price`, `payment`, `handler`, `wallet` | required |
-| `registryUrl` | `process.env.REGISTRY_URL` or `http://localhost:4000` |
+| `registryUrl` | `process.env.REGISTRY_URL` (optional, see below) |
 | `selfUrl` | `process.env.SELF_URL` or `http://localhost:<port>` |
 | `port` | `process.env.PORT` or `3000`; `listen(port)` overrides |
 | `taskPath` | `/query` |
 | `network` | `process.env.STELLAR_NETWORK` or `stellar:testnet` |
 | `facilitatorUrl` | `process.env.X402_FACILITATOR_URL` or the x402.org facilitator |
-| `rpcUrl` | Soroban testnet RPC (MPP) |
-| `heartbeatMs` | `240000` (`0` disables) |
-| `syncFacilitatorOnStart` | `true` (x402) |
+| `heartbeatMs` | `240000` (`0` disables re-registration) |
 | `cors`, `gracefulShutdown` | `true` |
 
-Invalid config throws `AgentConfigError` at `createAgent()`, the agent fails
-fast rather than at the first request.
+Invalid config throws `AgentConfigError` at `createAgent()`, so the agent fails fast rather
+than at the first request.
 
-## Escape hatches
+**Registry self-registration is optional.** If you set `registryUrl`, the agent registers
+itself with that agent registry on `listen()` (retrying on a `5s / 15s / 30s / 60s`
+backoff, re-registering every `heartbeatMs`, and deregistering on `SIGTERM`/`SIGINT`). The
+paywall works with or without a registry. The CleverCon marketplace lists services via the
+Provider console (see `createProvider`), so a registry is only needed if you run your own
+agent directory.
 
-- `routes: (app) => { ... }`, register extra unpaid routes, or mutate
-  `agent.app` directly before `listen()`.
-- `middleware`, replace the built-in payment middleware entirely.
-- `deps`, inject the x402 / MPP / `fetch` implementations (used by the tests).
-- `withX402(opts)` / `withMpp(opts)`, the payment middleware factories, usable
-  standalone.
-- `createPayingFetch({ secretKey })`, a `fetch` that settles x402 `402`
-  challenges, for agents that pay downstream services.
-
-## Programmatic API
+### Programmatic API
 
 ```ts
-const agent = createAgent(config);
 agent.app; // the Express app (for tests / mounting)
 agent.address; // public key derived from the wallet
-agent.manifest; // the payload sent to the registry
+agent.manifest; // the registration payload
 await agent.registerSelf();
 await agent.deregister();
 await agent.reportFeedback(jobId, { success: true, quality_rating: 5, latency_ms: 1200 });
@@ -221,15 +241,45 @@ agent.listen(port);
 agent.stop(); // cancel heartbeat / pending retries
 ```
 
+### Escape hatches
+
+- `routes: (app) => { ... }` — register extra unpaid routes, or mutate `agent.app` before `listen()`.
+- `middleware` — replace the built-in payment middleware entirely.
+- `deps` — inject the x402 / MPP / `fetch` implementations (used by the tests).
+
+## Payment middleware (standalone)
+
+Use the x402 / MPP primitives directly, without `createAgent`:
+
+- `withX402(opts)` / `withMpp(opts)` — Express middleware that puts a paywall on a route.
+- `createPayingFetch({ secretKey })` — a `fetch` that settles x402 `402` challenges, for
+  agents that pay downstream services.
+
+## Registry client (optional, `createRegistryClient`)
+
+A low-level client for an agent registry (`register` / `deregister` / `feedback` against a
+`registryUrl` you provide). `createAgent` uses it internally; use it directly only if you
+run your own agent directory. Most users do not need this.
+
+## Error handling
+
+- `CleverConError` — thrown by the spending surfaces; carries the HTTP `status`
+  (e.g. 401 invalid key, 429 quota exceeded) and the server message.
+- `AgentConfigError` — thrown by `createAgent()` on invalid config.
+
 ## Examples
 
-- [`examples/stellar-oracle`](./examples/stellar-oracle), the `stellar-oracle`
-  agent rebuilt on the SDK, byte-for-byte parity on manifest, health, the x402
-  paywall, the `/cache/stats` route, and downstream x402 payments. Covered by
-  `src/parity.test.ts`.
-- [`examples/minimal-mpp`](./examples/minimal-mpp), the smallest MPP agent:
-  a manifest, a handler, a wallet.
+Runnable examples live in the repository:
+[`examples/x402-agent`](https://github.com/clevercon-protocol/clevercon/tree/main/packages/agent-sdk/examples/x402-agent),
+[`examples/stellar-oracle`](https://github.com/clevercon-protocol/clevercon/tree/main/packages/agent-sdk/examples/stellar-oracle),
+and [`examples/minimal-mpp`](https://github.com/clevercon-protocol/clevercon/tree/main/packages/agent-sdk/examples/minimal-mpp).
 
-```bash
-EXAMPLE_ORACLE_SECRET_KEY=S... npm run example:oracle -w @clevercon/agent-sdk
-```
+## Links
+
+- App and Developer console: https://clevercon.xyz
+- MCP server: [`@clevercon/mcp`](https://www.npmjs.com/package/@clevercon/mcp)
+- Source and issues: https://github.com/clevercon-protocol/clevercon
+
+## License
+
+MIT

@@ -1,8 +1,8 @@
 export { createAgent } from './agent.js';
 export { withX402, createPayingFetch } from './payments/x402.js';
 export { withMpp } from './payments/mpp.js';
-export { createRegistryClient, RETRY_DELAYS_MS, HEARTBEAT_MS } from './registry.js';
-export { resolveConfig, buildManifest, AgentConfigError } from './config.js';
+export { createRegistryClient } from './registry.js';
+export { AgentConfigError } from './config.js';
 export { createProvider, MAX_OUTPUT_CHARS } from './provider.js';
 export { createSpender, CleverConError } from './spender.js';
 export { createAgentWallet } from './agent-wallet.js';
