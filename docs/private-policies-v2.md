@@ -60,34 +60,48 @@ The same four components must agree byte for byte:
 
 ## 2. Rule set (pp/2)
 
-pp/2 keeps pp/1's four rules and adds the rules the real applications need. Each
-rule has an `enabled` flag; a disabled rule is provably neutral (gated so it
-neither blocks a release nor satisfies another rule). At least one rule must be
-enabled (an empty policy is rejected at commit, never "allow all").
+pp/2 keeps pp/1's four rules and adds the rules the real applications and the
+agent economy need. Each rule has an `enabled` flag; a disabled rule is provably
+neutral (gated so it neither blocks a release nor satisfies another rule). At
+least one rule must be enabled (an empty policy is rejected at commit, never
+"allow all").
 
 | # | Rule | Fields | Meaning when enabled | Application |
 |---|---|---|---|---|
 | R1 | Per-payment ceiling | `ceiling` | `amount <= ceiling` | all |
 | R2 | Rolling cap over a window | `cap`, `window_secs` | `running_spend + amount <= cap` | payroll, allowance |
-| R3 | Allowlist (deep) | `root`, depth `D = 16` | `payee in allowlist` (Merkle membership, 65,536 payees) | payroll, disbursement |
+| R3 | Allowlist (deep) | `root`, depth `D = 16` | `payee in allowlist` (Merkle membership, 65,536 payees) | payroll, disbursement, approved providers |
 | R4 | Deny-list + threshold | `entries[K]`, `threshold` | `payee not in deny-list` whenever `amount >= threshold` | compliance |
-| R5 | Per-payee limit | allowlist leaf `= H(payee_field, payee_cap)` | for the proven payee, `amount <= payee_cap` | payroll, bounty tiers |
+| R5 | Per-payee limit | allowlist leaf carries `payee_cap` | for the proven payee, `amount <= payee_cap` | payroll, bounty tiers, per-provider caps |
 | R6 | Calendar window | `[start, end]` list, `now` (witness) | `now in some allowed window` | scheduled payroll, grants |
+| R7 | Velocity (count cap) | `max_count`, `window_secs` | `releases_in_window + active <= max_count` | agent rate-limit, metered service calls |
+| R8 | Per-category limit | leaf carries `category`, `cat_ceiling[C]` | for the payee's category, `amount <= cat_ceiling[category]` | service-marketplace budgets by category |
 
-**R5 (per-payee limit)** rides on R3: the allowlist leaf becomes
-`H(payee_field, payee_cap)` instead of `H(payee_field)`. Proving membership then
-also proves the payee's individual cap, and the circuit asserts `amount <=
-payee_cap`. This is how one policy can say "employee A up to 2,000, employee B up
-to 5,000" without revealing the roster or the amounts. When R5 is disabled the
-leaf is `H(payee_field, 0)` and the cap check is neutral.
+**The allowlist leaf (R3/R5/R8).** The leaf is `H(payee_field, payee_cap,
+category)`. Proving membership (R3) therefore also binds the payee's individual
+cap (R5) and category (R8) without revealing the roster. R5 asserts `amount <=
+payee_cap`; R8 looks up `cat_ceiling[category]` (a small fixed set of `C`
+categories) and asserts `amount <= cat_ceiling[category]`. A disabled rule uses a
+neutral value (cap/ceiling 0 with the check gated off). This is how one policy can
+say "employee A up to 2,000, employee B up to 5,000" (R5) or "any data-service
+call up to 50, any compute-service call up to 200" (R8), privately.
+
+**R7 (velocity)** caps the *number* of releases in a window, independent of
+amount, so an autonomous agent cannot drain a budget through many small legitimate
+payments and metered per-call service spend can be rate-limited. Like R2 it is
+vault-assisted: the vault keeps a per-commitment release-count accumulator and the
+circuit proves `prior_count + active_releases <= max_count`.
 
 **Batch disbursement.** One proof may authorize `N` releases (e.g., pay 50 bounty
 winners at once) instead of one. The circuit proves every tuple
-`(payee_i, amount_i)` obeys R1/R3/R4/R5 and that `sum(amount_i) + running_spend
-<= cap` for R2, and derives `N` independent nullifiers. Public inputs scale to
-`N` payees / amounts / nullifiers (see section 4). `N` is fixed per compiled
-circuit (a small set of sizes, e.g., 1, 8, 64); the vault picks the smallest that
-fits. This is the headline feature for GrantFox-style disbursement and payroll.
+`(payee_i, amount_i)` obeys the per-release rules (R1/R3/R4/R5/R8) and that the
+batch obeys the aggregate rules (`sum(amount_i) + running_spend <= cap` for R2,
+`active_count` for R7), and derives `N` independent nullifiers. An `active` flag
+marks real releases so a partially filled batch's null slots are provable no-ops
+(nullifier 0, the vault skips them). Public inputs scale to `N` payees / amounts /
+nullifiers (see section 4). `N` is fixed per compiled circuit (a small set of
+sizes, e.g., 1, 8, 64); the vault picks the smallest that fits. This is the
+headline feature for GrantFox-style disbursement and payroll.
 
 **Selective disclosure (optional).** A policy MAY carry a public `category` tag
 (e.g., a hash of "payroll") so a release can prove "this payment is governed by a
@@ -99,11 +113,14 @@ extra public input the prover opts into; absent opt-in it is a fixed constant.
 The circuit lands in increments so each is CI-proven against the verifier before
 the next:
 
-1. **g16-single**: R1 + R2 (vault-assisted) + R3 (depth 16) + R5, single payment,
-   4 public inputs. Matches today's policy UI plus per-payee limits.
-2. **g16-batch**: the above for `N in {8, 64}`, batched public inputs + aggregate
-   R2.
-3. **g16-extras**: R4 deny-list, R6 calendar windows, selective-disclosure tag.
+1. **g16-single**: R1 + R3 (depth 16) + R5, single payment, 4 public inputs.
+   Matches today's policy UI plus per-payee limits. (proven)
+2. **g16-batch**: the above for `N` releases, batched public inputs; per-release
+   R1/R3/R5 + N nullifiers + null-slot `active` flag. (proven)
+3. **g16-accumulator**: R2 (rolling cap) and R7 (velocity), which share the
+   vault-assisted accumulator mechanism; plus the aggregate batch checks.
+4. **g16-extras**: R8 per-category limit (leaf + category selector), R4 deny-list,
+   R6 calendar windows, selective-disclosure tag.
 
 ---
 
@@ -112,25 +129,29 @@ the next:
 The commitment is the only representation of the policy that leaves the device.
 
 ```
-policy_encoding = enabled_flags            (6 x Fr, 0/1: R1..R6)
+policy_encoding = enabled_flags            (8 x Fr, 0/1: R1..R8)
                || R1.ceiling
                || R2.cap || R2.window_secs || R2.delegate
                || R3.root || R3.depth
                || R4.entries[0..K] || R4.threshold
                || R6.windows_root                    (Merkle/hash of calendar windows)
+               || R7.max_count || R7.window_secs
+               || R8.cat_ceiling[0..C-1]             (per-category ceilings)
                || category                           (selective-disclosure tag, else 0)
                || version                            (Fr, = 2 for pp/2)
 
 commitment = H( policy_encoding, salt )              (H = Poseidon/BLS12-381)
 ```
 
+The per-payee cap (R5) and category (R8) are not top-level fields: they live
+inside the R3 allowlist leaves (`H(payee_field, payee_cap, category)`), so the
+roster size never leaks through the encoding length.
+
 - `salt` is a uniformly random `Fr` (`>= 128 bits` entropy), device-generated,
   kept private; it makes the commitment hiding.
 - Field ordering is normative. `u128`/`u64` values embed directly (all `< r`).
 - The 32-byte big-endian `commitment` is public input `PI0` and is what the vault
-  stores (`policies.commitment`, hex). Per-payee caps (R5) live inside the R3
-  leaves, not as separate top-level fields, so the roster size does not leak
-  through the encoding length.
+  stores (`policies.commitment`, hex).
 
 An auditor with the policy and salt recomputes the identical 32 bytes.
 
@@ -190,8 +211,9 @@ binding check. Soundness of the predicate is enforced cryptographically on-chain
 not delegated to a trusted proving stack. This is the core pp/2 upgrade and the
 reason it is strictly stronger than pp/1.
 
-**What the design hides.** The rule itself (all of R1..R6, thresholds, per-payee
-caps), the salt, the allowlist roster, and the calendar. None appear on-chain or
+**What the design hides.** The rule itself (all of R1..R8, thresholds, per-payee
+caps, per-category ceilings, velocity limits), the salt, the allowlist roster (and
+each payee's cap and category), and the calendar. None appear on-chain or
 server-side (absent explicit `ruleSummary` opt-in).
 
 **What is public regardless.** The payee and amount of each release are public
@@ -205,11 +227,14 @@ versus `N` separate releases.
 plaintext policy and salt never leave the user's control. There is no hosted
 plaintext-prover trust assumption in pp/2.
 
-**R2 running total.** As in pp/1, the plaintext running total is not put on-chain.
-The vault keeps a per-commitment accumulator and supplies the prior running spend
-as an authenticated witness; the circuit proves `running_spend + amount <= cap`.
-A fully in-circuit private accumulator (old/new accumulator commitments as extra
-public inputs) remains a later enhancement, now tracked as `g16-extras+`.
+**Accumulated rules (R2, R7).** As in pp/1, neither the plaintext running total
+(R2) nor the running release count (R7) is put on-chain. The vault keeps a
+per-commitment accumulator and supplies the prior value as an authenticated
+witness; the circuit proves `running_spend + amount <= cap` (R2) and
+`prior_count + active <= max_count` (R7). These land together in the
+`g16-accumulator` increment since they share the mechanism. A fully in-circuit
+private accumulator (old/new accumulator commitments as extra public inputs) is a
+later hardening step.
 
 **Trusted setup.** Groth16 needs a per-circuit trusted setup (a Powers-of-Tau
 phase-1 plus a circuit-specific phase-2). pp/2 uses a public, auditable multi-
@@ -235,10 +260,10 @@ only (never the production VK).
 ## 8. Component responsibilities (pp/2)
 
 - **Circuit** (`circuits/spend-policy-g16`): public inputs exactly per section 4;
-  proves `H(policy, salt) == commitment`, the enabled rules (R1..R6), per-payee
-  caps (R5), and each nullifier; inactive rules provably neutral; batch no-op slots
-  provably neutral. Ships the circom source, the phase-2 artifacts, and a golden
-  proof/VK per size.
+  proves `H(policy, salt) == commitment`, the enabled rules (R1..R8), per-payee
+  caps and categories (R5/R8), and each nullifier; inactive rules provably neutral;
+  batch no-op slots provably neutral. Ships the circom source, the phase-2
+  artifacts, and a golden proof/VK per size.
 - **Verifier** (`contracts/policy-verifier`): `verify_groth16(vk, proof,
   public_inputs) -> bool` (done, CI-proven); `set_vk`/`get_vk_hash` for VK rotation
   per size; fail-closed.
