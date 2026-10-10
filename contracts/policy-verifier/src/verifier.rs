@@ -2,14 +2,18 @@
 //!
 //! # Design rationale and verifier choice
 //!
-//! ## Why not a full pairing-based UltraHonk?
+//! ## Why a binding check for the v1 (BN-254 / UltraHonk) proof?
 //!
-//! A complete UltraHonk verification requires BN-254 or BLS-12-381 pairings.
-//! Soroban does not expose a native pairing host function; emulating one in
-//! WASM costs ~500–800 M instructions per pair, which is ~5–8× the single-call
-//! budget of ~100 M instructions. A full on-chain pairing would therefore
-//! require chunked verification across multiple transactions — significant
-//! complexity and a poor UX.
+//! The spend-policy circuit is currently proven with Noir/UltraHonk over the
+//! BN-254 curve. Soroban's native pairing host functions target BLS12-381, not
+//! BN-254, and a BN-254 pairing emulated in WASM costs far more than the
+//! ~100 M per-transaction instruction budget. So for the BN-254 proof this
+//! verifier binds the proof to its public inputs with a SHA-256 transcript (a
+//! v1 compromise) rather than verifying pairings.
+//!
+//! The trustless path (Phase B) retargets the circuit to Groth16 over BLS12-381
+//! and verifies it with the native pairing host functions; see `groth16.rs`
+//! (`verify_groth16`). Wiring a BLS12-381 verifying key in replaces this check.
 //!
 //! ## Chosen approach: host-accelerated polynomial-binding check
 //!

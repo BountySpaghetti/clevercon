@@ -41,6 +41,7 @@ extern crate alloc;
 
 mod encoding;
 mod error;
+mod groth16;
 mod types;
 mod verifier;
 
@@ -50,7 +51,7 @@ pub mod fixtures;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, log, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, log, Address, Bytes, BytesN, Env, Vec};
 
 use crate::{
     encoding::build_public_inputs,
@@ -202,6 +203,38 @@ impl PolicyVerifier {
         matches!(
             Self::verify(env, commitment, payee, amount, nullifier, proof),
             Ok(true)
+        )
+    }
+
+    /// Trustless Groth16/BLS12-381 verification (Phase B). Unlike [`Self::verify`]
+    /// (a v1 binding check), this verifies the proof cryptographically on-chain
+    /// via Soroban's native pairing. Points are uncompressed (G1 96 bytes, G2 192
+    /// bytes); `public_inputs` are 32-byte big-endian scalars. `ic` length MUST be
+    /// `public_inputs.len() + 1`. Fail-closed: returns `false` on any mismatch.
+    #[allow(clippy::too_many_arguments)]
+    pub fn verify_groth16(
+        env: Env,
+        alpha_g1: BytesN<96>,
+        beta_g2: BytesN<192>,
+        gamma_g2: BytesN<192>,
+        delta_g2: BytesN<192>,
+        ic: Vec<BytesN<96>>,
+        proof_a: BytesN<96>,
+        proof_b: BytesN<192>,
+        proof_c: BytesN<96>,
+        public_inputs: Vec<BytesN<32>>,
+    ) -> bool {
+        groth16::verify_groth16(
+            &env,
+            &alpha_g1,
+            &beta_g2,
+            &gamma_g2,
+            &delta_g2,
+            &ic,
+            &proof_a,
+            &proof_b,
+            &proof_c,
+            &public_inputs,
         )
     }
 
