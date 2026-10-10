@@ -16,7 +16,7 @@
 export interface SpenderOptions {
   /** Scoped API key (cc_...). */
   apiKey: string;
-  /** API base URL. Defaults to CLEVERCON_API_URL or http://localhost:4100. */
+  /** API base URL. Defaults to CLEVERCON_API_URL, or the live CleverCon API. */
   apiUrl?: string;
   /** Override fetch (for tests or a custom agent). Defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -116,7 +116,7 @@ export function createSpender(options: SpenderOptions): CleverConClient {
   const apiUrl = (
     options.apiUrl ??
     (typeof process !== 'undefined' ? process.env?.CLEVERCON_API_URL : undefined) ??
-    'http://localhost:4100'
+    'https://cleverconapi-production.up.railway.app'
   ).replace(/\/+$/, '');
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT;

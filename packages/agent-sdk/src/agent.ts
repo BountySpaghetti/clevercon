@@ -1,6 +1,6 @@
 import express from 'express';
 import corsMiddleware from 'cors';
-import { logger as defaultLogger } from '@clevercon/common';
+import { logger as defaultLogger } from './logger.js';
 import type { Server } from 'node:http';
 import { buildManifest, resolveConfig, type ResolvedConfig } from './config.js';
 import { createRegistryClient, type RegistryClient } from './registry.js';

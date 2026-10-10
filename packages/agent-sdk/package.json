@@ -1,19 +1,39 @@
 {
   "name": "@clevercon/agent-sdk",
-  "version": "1.0.0",
+  "version": "0.1.0",
+  "description": "Give an AI agent a private, non-custodial spending account on Stellar: pay, disburse, hire and pay services (x402/MPP), or be a paid service, all within policy.",
+  "license": "MIT",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./provider": "./src/provider.ts",
-    "./spender": "./src/spender.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./provider": {
+      "types": "./dist/provider.d.ts",
+      "default": "./dist/provider.js"
+    },
+    "./spender": {
+      "types": "./dist/spender.d.ts",
+      "default": "./dist/spender.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "example:oracle": "npx tsx examples/stellar-oracle/agent.ts",
     "example:mpp": "npx tsx examples/minimal-mpp/agent.ts"
   },
   "dependencies": {
-    "@clevercon/common": "*",
     "@stellar/mpp": "^0.3.0",
     "@stellar/stellar-sdk": "^14.6.1",
     "@x402/core": "^2.8.0",

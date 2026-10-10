@@ -49,7 +49,7 @@ import type { ApiConfig } from './api-client.js';
 
 function getConfig(): ApiConfig {
   return {
-    api_url: process.env.CLEVERCON_API_URL || 'http://localhost:4100',
+    api_url: process.env.CLEVERCON_API_URL || 'https://cleverconapi-production.up.railway.app',
     api_key: process.env.CLEVERCON_API_KEY,
   };
 }

@@ -21,6 +21,11 @@ RUN npm ci
 # Compile the NestJS API to dist (api runs compiled; workers + indexer run via tsx).
 RUN npm run build -w @clevercon/api
 
+# Build the agent SDK to dist so the reference provider (which imports
+# @clevercon/agent-sdk/provider) resolves it at runtime; the SDK's package
+# exports point at dist for npm consumers.
+RUN npm run build -w @clevercon/agent-sdk
+
 ENV NODE_ENV=production
 
 # Default command = API. Railway's workers/indexer services override this with:

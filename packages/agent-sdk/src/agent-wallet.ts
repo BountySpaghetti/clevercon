@@ -27,7 +27,7 @@ export interface AgentWalletOptions {
   apiKey: string;
   /** The agent's OWN Stellar secret. Non-custodial: only the agent ever holds it. */
   secretKey: string;
-  /** CleverCon API base. Defaults to CLEVERCON_API_URL or http://localhost:4100. */
+  /** CleverCon API base. Defaults to CLEVERCON_API_URL, or the live CleverCon API. */
   apiUrl?: string;
   /** x402 network (default STELLAR_NETWORK or `stellar:testnet`). */
   network?: string;
