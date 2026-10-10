@@ -83,27 +83,27 @@ const PILLARS = [
     tint: 'from-cyan-500/20 to-transparent',
     ring: 'text-cyan-300',
     border: 'border-cyan-800/40',
-    tag: 'What it is',
-    title: 'A spending account, bounded',
-    body: 'Fund a non-custodial vault and set rules. The contract holds the money and refuses any payment that breaks a rule, so the platform never has custody and the agent can never overspend or pay an unapproved party.',
+    tag: 'Bounded & non-custodial',
+    title: "A spending account it can't abuse",
+    body: 'Fund a non-custodial vault and set your limits. The contract holds the money and refuses any payment that breaks a rule, so the platform never has custody and the agent cannot overspend or pay anyone you did not approve.',
   },
   {
     icon: Shield,
     tint: 'from-violet-500/20 to-transparent',
     ring: 'text-violet-300',
     border: 'border-violet-800/40',
-    tag: 'The differentiator',
-    title: 'Private by design',
-    body: 'The rules are enforced on-chain but never published. Your budget and approved payees stay yours, proven with a compliance proof, not broadcast to a public ledger. This is what transparent enforcers and escrows cannot do.',
+    tag: 'Private',
+    title: 'Rules only you can see',
+    body: 'Your limits are committed and checked on-chain without being published. Your budget and approved payees stay yours, a binding proof today, with trustless zero-knowledge verification on the roadmap. Transparent enforcers and escrows cannot do this.',
   },
   {
     icon: Boxes,
     tint: 'from-emerald-500/20 to-transparent',
     ring: 'text-emerald-300',
     border: 'border-emerald-800/40',
-    tag: 'The reach',
-    title: 'Works with any agent',
-    body: 'A Stellar MCP server gives any MCP-capable agent (Claude Desktop, Cursor, your own) a bounded spending account in minutes. An SDK embeds the same rail in a few calls. No custom integration.',
+    tag: 'A real economy',
+    title: 'An economy to act in',
+    body: 'Pay vendors, disburse to many, hire services, pay per call for APIs, or pay other agents, via dApp, SDK, or MCP. Direct payments plus a registered service market, all inside your policy.',
   },
 ];
 
@@ -130,8 +130,8 @@ const USAGE_MODES = [
   },
   {
     icon: Search,
-    title: 'Hire a service',
-    body: 'Point the agent at the curated directory, or a provider you chose, and it pays per step from the vault under your policy. Hiring is one application of the rail, not the whole thing.',
+    title: 'Hire and pay services',
+    body: 'Hire from the registered service market and pay per call (x402/MPP) from the vault under your policy: data, AI, research, or any paid API an agent needs.',
   },
 ];
 
@@ -147,7 +147,7 @@ const OFFERINGS: { icon: typeof Wallet; name: string; status: OfferStatus; body:
     icon: Store,
     name: 'Service directory',
     status: 'live',
-    body: 'A curated set of automated services an agent can hire, paid per step from the vault. Discovery, not a two-sided marketplace.',
+    body: 'A registered market of services an agent can hire and pay per call (x402/MPP), with on-chain reputation. Open to any provider.',
   },
   {
     icon: Shield,
@@ -366,21 +366,21 @@ export function Landing() {
           <Reveal>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-400">
               <Sparkles size={12} className="text-violet-400" />
-              Spending control for AI agents on Stellar
+              Private, non-custodial money for AI agents on Stellar
             </span>
           </Reveal>
           <Reveal delay={80}>
             <h1 className="mt-6 text-4xl sm:text-6xl font-extrabold tracking-tight text-white leading-[1.05] text-balance">
-              Let AI agents spend money.
+              Money your AI agent can use,
               <br />
-              <span className="cc-gradient-text">Safely and privately.</span>
+              <span className="cc-gradient-text">under rules it can&apos;t break.</span>
             </h1>
           </Reveal>
           <Reveal delay={160}>
             <p className="mt-6 text-base sm:text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed">
-              CleverCon gives an AI agent a budget it cannot overspend, enforced on-chain and kept
-              private. Fund a non-custodial vault, set your rules, and your agent pays, disburses,
-              and hires within them, over MCP or the SDK. You stay in control the whole time.
+              CleverCon gives an AI agent a private, non-custodial spending account on Stellar, and
+              an economy to use it in: pay a vendor, disburse to many, hire services, or pay per
+              call for APIs, always within limits only you set and no one else can see.
             </p>
           </Reveal>
           <Reveal delay={240}>
@@ -415,7 +415,7 @@ export function Landing() {
         <div className="max-w-6xl mx-auto">
           <Reveal className="text-center max-w-2xl mx-auto">
             <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight text-balance">
-              Bounded, private, and pluggable into any agent
+              Bounded, private, and an economy to act in
             </h2>
             <p className="mt-3 text-slate-400">Three things, one coherent product.</p>
           </Reveal>

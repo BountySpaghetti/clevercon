@@ -44,9 +44,7 @@ async function main(): Promise<void> {
     try {
       const cursor = await indexer.getCursor(STREAM_KEY);
       const request = (
-        cursor
-          ? { filters, cursor, limit: 100 }
-          : { filters, startLedger, limit: 100 }
+        cursor ? { filters, cursor, limit: 100 } : { filters, startLedger, limit: 100 }
       ) as SorobanRpc.Api.GetEventsRequest;
 
       const res = await server.getEvents(request);

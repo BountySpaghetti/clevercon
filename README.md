@@ -2,7 +2,7 @@
 
 # CleverCon
 
-**The non-custodial spending-control layer for AI agents on Stellar. Fund a vault, set private spending rules, and your agent spends within them, enforced on-chain.**
+**Money your AI agent can use, under rules it can't break. A private, non-custodial spending account on Stellar, and an economy to use it in: pay, disburse, hire services, and pay other agents, all within limits only you set and no one else can see.**
 
 [![CI](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml/badge.svg)](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -16,17 +16,15 @@
 
 ## What it is
 
-CleverCon lets you safely put an AI agent in charge of your money. You fund a non-custodial vault, set the limits it must obey (a budget, per-payment caps, an allowlist of who it may pay, time windows), optionally keep those limits private, then instruct your agent in plain terms to spend and disburse funds however serves your goal. The vault guarantees on-chain that the agent can never spend outside your rules or reveal them, and the platform never holds your funds.
+CleverCon gives an AI agent a private, non-custodial spending account on Stellar, and an economy to use it in. You fund a vault, set the limits the agent must obey (a budget, per-payment caps, an allowlist of who it may pay, time windows), and keep those limits private. Then your agent can pay a vendor, disburse to many, hire services and pay per call for APIs, or pay other agents, all within rules only you set and no one else can see.
 
-The vault holds your funds non-custodially and gates releases behind an on-chain policy proof tied to your committed rules, so the agent spends within your limits and the rules stay private. The platform never holds your funds.
-
-It is delegation with hard limits: the agent owns the decisions (who to pay, when, how much, by whatever logic you give it); the contract owns the guarantee (bounds, privacy, non-custody). **Hiring services is one application of this, not the whole thing.**
+The vault holds your funds non-custodially and gates every release behind an on-chain policy proof tied to your committed rules, so the agent spends within your limits and the rules stay private. The platform never holds your funds.
 
 Three things define it:
 
-1. **Delegated decisions, hard limits.** The agent acts autonomously, but the vault releases a payment only if it passes an on-chain policy check, so even a compromised or careless agent cannot exceed the budget or pay an unapproved party.
-2. **The rules stay private.** Your caps, allowlist, and limits are committed and checked on-chain without being published: the ledger shows a payment was allowed without revealing the rule that allowed it. This is what transparent enforcers and escrows cannot do.
-3. **Useful from day one, no marketplace required.** Value is one-sided: a single developer with a single agent gets the full benefit immediately, even paying one address. There is no two-sided liquidity to bootstrap.
+1. **Bounded and non-custodial.** The agent decides who to pay, when, and how much, but the vault releases a payment only if it passes an on-chain policy check, so even a compromised or careless agent cannot exceed the budget or pay someone you did not approve. The platform never takes custody.
+2. **The rules stay private.** Your caps, allowlist, and limits are committed and checked on-chain without being published: the ledger shows a payment was allowed without revealing the rule that allowed it. A binding proof today, with trustless zero-knowledge verification on the roadmap.
+3. **A real economy, not just a wallet.** Direct payments and disbursements to any allowlisted address, plus a registered service market where agents hire and pay per call (x402/MPP), with on-chain reputation. Reachable from a dApp, an SDK, or an MCP server.
 
 It is live on Stellar testnet today at [clevercon.xyz](https://clevercon.xyz): deployed contracts, a usable app, an SDK, and an MCP server that gives any AI agent a bounded, non-custodial spending account in minutes.
 
@@ -104,7 +102,7 @@ When the payees are service providers, hiring takes three shapes:
 - **Find and pay one service.** Describe what you need; the curated directory returns matching services by capability, price, and reputation. Pick one and pay.
 - **Compose a multi-service job.** For work that spans services (gather data, analyze it, write a report), your agent plans the steps, hires a service for each, and pays as each completes.
 
-The directory is discovery, not the product. The product is the spending-control layer, which works whether your agent pays one address or many, services or otherwise.
+The directory is one side of the economy, a registered service market with on-chain reputation, open to any provider. The other side is direct payments, and the account works the same whether your agent pays one address, many, or services. The private, bounded control underneath is what makes all of it safe.
 
 ## What runs today (Stellar testnet)
 
@@ -121,7 +119,7 @@ The directory is discovery, not the product. The product is the spending-control
 
 **Product surfaces:**
 - **Web app**: connect a wallet, add a USDC trustline, fund the vault, create a private policy, hire services, request a compliance proof, and watch releases settle, all live.
-- **Service directory**: browse, search, filter, and sort a curated set of automated services an agent can hire (discovery, not a two-sided marketplace).
+- **Service directory**: browse, search, filter, and sort the registered service market an agent can hire and pay per call (x402/MPP), with on-chain reputation.
 - **Admin console**: monitoring, user and role management, on-chain protocol-fee config, service moderation, and dispute arbitration.
 - **Developer platform**: API keys with quotas, signed webhooks, an **SDK** (`@clevercon/agent-sdk`: `createSpender` for a bounded spending account, `createAgentWallet` for x402 agent-key mode, `createProvider`/`createAgent` to be a paid service), and a Stellar **MCP server** (`@clevercon/mcp`, 12 tools) that pays, disburses, hires, and tracks on the live rail.
 

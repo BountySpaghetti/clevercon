@@ -3,12 +3,13 @@
 How CleverCon's pieces fit together on Stellar testnet today, and where the
 architecture is headed per [ROADMAP.md](../ROADMAP.md).
 
-CleverCon is the non-custodial spending-control layer that lets an AI agent spend
-money on Stellar within private, on-chain-enforced limits. You fund a vault, set a
-policy (optionally private), authorize a delegate once, and your agent spends
-within the policy through any of three doors (dApp, SDK, or MCP). The vault
-guarantees on-chain that the agent cannot exceed the budget or pay an unapproved
-party, and the platform never holds your funds.
+CleverCon gives an AI agent a private, non-custodial spending account on Stellar,
+and an economy to use it in. You fund a vault, set a policy (kept private),
+authorize the agent once, and it can pay, disburse, hire and pay services per call
+(x402/MPP), or pay other agents, through any of three doors (dApp, SDK, or MCP), all
+within your limits. The vault enforces those limits on-chain so the agent cannot
+exceed the budget or pay anyone you did not approve, and the platform never holds
+your funds. Spending control is the guarantee; the economy is the point.
 
 > The earlier hackathon stack (an Express `orchestrator` + JSON `registry` + the
 > `packages/agents/*` samples + `contracts/budget-guardian`) has been **removed**

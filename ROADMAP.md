@@ -2,29 +2,27 @@
 
 ## Vision
 
-CleverCon lets you safely put an AI agent in charge of money on Stellar. You fund
-a non-custodial Soroban vault, set the limits it must obey (a budget, per-payment
-caps, an allowlist of payees, time windows), optionally keep those limits private,
-and your agent then decides how to spend and disburse funds within them. The vault
-enforces the boundary on-chain, so neither the agent nor the platform can exceed
-it, and the platform never holds your funds.
+CleverCon gives an AI agent a private, non-custodial spending account on Stellar,
+and an economy to use it in. You fund a non-custodial Soroban vault, set the limits
+the agent must obey (a budget, per-payment caps, an allowlist of payees, time
+windows), and keep those limits private. Your agent can then pay a vendor, disburse
+to many, hire services and pay per call for APIs, or pay other agents, all within
+rules only you set and no one else can see. The vault enforces the boundary
+on-chain, so neither the agent nor the platform can exceed it, and the platform
+never holds your funds.
 
-It is a spending-control layer, not a payment rail: Stellar moves the money;
-CleverCon governs how an agent may spend it, privately. Three things define it:
+Spending control is the guarantee; the economy is the point. Three things define it:
 
-- **Delegated decisions, hard limits.** The agent has autonomy over who, when, and
-  how much within the allowed set; the contract guarantees it can never spend
-  outside your rules or pay an unapproved party.
-- **Privacy, the differentiator.** The rules are enforced on-chain but kept
-  private, which is what separates CleverCon from transparent, custodial, or
-  escrow alternatives.
-- **One primitive, many uses.** Hiring services is one application. The same
-  bounded, private payments cover autonomous disbursements and payouts, recurring
-  vendor and API payments, agent-to-agent payments, treasury automation, grant and
-  bounty disbursement, and bounded allowances.
-
-Not tied to AI-only or to a marketplace: any Stellar address you allowlist can be
-paid, and the curated directory of services is a convenience, not the product.
+- **Bounded and non-custodial.** The agent has autonomy over who, when, and how
+  much within the allowed set; the contract guarantees it can never spend outside
+  your rules or pay someone you did not approve, and never takes custody.
+- **Private, the differentiator.** The rules are enforced on-chain but kept
+  private, which separates CleverCon from transparent, custodial, or escrow
+  alternatives.
+- **A real economy.** Direct payments and disbursements to any allowlisted address,
+  plus a registered service market where agents hire and pay per call (x402/MPP),
+  with on-chain reputation, covering autonomous payouts, recurring vendor and API
+  payments, agent-to-agent payments, treasury automation, and bounded allowances.
 
 Today the vault enforces spending with a binding proof. The headline roadmap item
 is the full zero-knowledge policy circuit, so the rule stays private under a formal
