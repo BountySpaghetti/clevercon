@@ -26,6 +26,64 @@ export const emptyDraft = (): Draft => ({
   allowlist: [],
 });
 
+// Application presets: the real jobs people use CleverCon for. Each is a ready
+// starting policy the owner adjusts (amounts are examples; add payees below).
+export type PolicyTemplate = { key: string; label: string; description: string; make: () => Draft };
+
+export const TEMPLATES: PolicyTemplate[] = [
+  {
+    key: 'bounty',
+    label: 'Bounty / disbursement',
+    description:
+      'Pay approved recipients for bounties, grants, or paid work, capped per payout and per month. Add the recipient addresses below.',
+    make: () => ({
+      isPrivate: true,
+      perPaymentCeiling: '500',
+      rollingCap: '5000',
+      rollingWindow: 'month',
+      allowlist: [],
+    }),
+  },
+  {
+    key: 'payroll',
+    label: 'Payroll / vendors',
+    description:
+      'Recurring payments to an approved list of people or vendors, capped per payment and per month.',
+    make: () => ({
+      isPrivate: true,
+      perPaymentCeiling: '2000',
+      rollingCap: '20000',
+      rollingWindow: 'month',
+      allowlist: [],
+    }),
+  },
+  {
+    key: 'grant',
+    label: 'Grant / gift',
+    description: 'One-off or batch gifts and grants to approved recipients, capped per payment.',
+    make: () => ({
+      isPrivate: true,
+      perPaymentCeiling: '1000',
+      rollingCap: '',
+      rollingWindow: 'month',
+      allowlist: [],
+    }),
+  },
+  {
+    key: 'allowance',
+    label: 'Agent allowance',
+    description:
+      'A bounded wallet for an agent: a small cap per payment and per week, to any payee within the caps.',
+    make: () => ({
+      isPrivate: true,
+      perPaymentCeiling: '50',
+      rollingCap: '200',
+      rollingWindow: 'week',
+      allowlist: [],
+    }),
+  },
+];
+
 export const isStellarAddr = (a: string) => /^G[A-Z2-7]{55}$/.test(a.trim());
 
 export function draftToRules(d: Draft): { rules: PolicyRules; isPrivate: boolean } {

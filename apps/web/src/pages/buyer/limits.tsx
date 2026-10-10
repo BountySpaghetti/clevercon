@@ -10,6 +10,7 @@ import {
   Gauge,
   CalendarClock,
   Star,
+  Sparkles,
 } from 'lucide-react';
 import { getPolicies, createPolicy } from '../../lib/policies';
 import { Card, CardHeader, EmptyState, ErrorState, Loading, controls } from '../../components/ui';
@@ -23,6 +24,7 @@ import {
   getDefaultLimitId,
   setDefaultLimitId,
   LIMIT_CACHE_PREFIX,
+  TEMPLATES,
   type Draft,
 } from './limits-model';
 
@@ -43,6 +45,24 @@ export function LimitsBuilder({ value, onChange }: { value: Draft; onChange: (d:
 
   return (
     <div className="space-y-4">
+      <div>
+        <span className="mb-1.5 flex items-center gap-1.5 text-xs text-slate-400">
+          <Sparkles size={13} className="text-violet-300" /> Start from a template
+        </span>
+        <div className="flex flex-wrap gap-2">
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onChange(t.make())}
+              title={t.description}
+              className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/[0.08]"
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="mb-1 flex items-center gap-1.5 text-xs text-slate-400">
