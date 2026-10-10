@@ -1,6 +1,7 @@
 # Private spending policies: commitment and proof protocol
 
-**Status:** Frozen v1 (protocol version `pp/1`). Normative.
+**Status:** Frozen v1 (protocol version `pp/1`). Normative for pp/1.
+**Superseded by:** [private-policies-v2.md](private-policies-v2.md) (`pp/2`), which replaces the SHA-256 binding check with a real Groth16/BLS12-381 pairing verified on-chain. pp/2 is the production target; pp/1 stays documented here for the deployed testnet path.
 **Audience:** implementers of the vault, the on-chain verifier, the Noir circuit, and the off-chain prover; and security reviewers.
 
 This document is the single source of truth for how a private spending policy is
