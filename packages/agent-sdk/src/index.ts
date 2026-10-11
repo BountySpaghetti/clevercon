@@ -5,6 +5,9 @@ export {
   buildBatchWitness,
   proveBatch,
   createBatchProof,
+  buildBatchReleaseRequest,
+  submitBatchRelease,
+  BATCH_RELEASE_PATH,
   BATCH_N,
   ALLOWLIST_DEPTH,
   CATEGORY_COUNT,
@@ -15,6 +18,7 @@ export type {
   BatchRelease,
   BatchContext,
   BatchProof,
+  BatchReleaseRequest,
   AllowlistMembership,
 } from './payments/batch-prover.js';
 export {

@@ -10,8 +10,10 @@ import {
 import {
   ALLOWLIST_DEPTH,
   BATCH_N,
+  buildBatchReleaseRequest,
   buildBatchWitness,
   type BatchContext,
+  type BatchProof,
   type BatchRelease,
   type PolicyWitness,
 } from './batch-prover.js';
@@ -132,5 +134,48 @@ describe('buildBatchWitness', () => {
       spendCounter: String(i),
     }));
     expect(() => buildBatchWitness(samplePolicy(), five, ctx)).toThrow();
+  });
+});
+
+describe('buildBatchReleaseRequest', () => {
+  const ctx: BatchContext = {
+    validAfter: '0',
+    validBefore: '9999',
+    runningSpend: '0',
+    priorCount: '0',
+  };
+  const proof: BatchProof = {
+    proof: { a: Buffer.alloc(96, 1), b: Buffer.alloc(192, 2), c: Buffer.alloc(96, 3) },
+    commitment: Buffer.alloc(32, 0xaa),
+    nullifiers: [Buffer.alloc(32, 0xbb), Buffer.alloc(32, 0xcc)],
+    publicSignals: [],
+  };
+
+  it('converts a proof + releases into the API relay request', () => {
+    const releases: BatchRelease[] = [
+      { payeeAddress: PAYEE, amountStroops: '60', spendCounter: '0' },
+      { payeeAddress: PAYEE, amountStroops: '30', spendCounter: '1' },
+    ];
+    const req = buildBatchReleaseRequest(proof, releases, ctx, '1', '2');
+    expect(req.taskId).toBe('1');
+    expect(req.stepId).toBe('2');
+    expect(req.payees).toEqual([PAYEE, PAYEE]);
+    expect(req.amounts).toEqual(['60', '30']);
+    expect(req.nullifiers).toEqual(['bb'.repeat(32), 'cc'.repeat(32)]);
+    expect(req.commitment).toBe('aa'.repeat(32));
+    expect(req.proof.a).toBe('01'.repeat(96));
+    expect(req.proof.b).toBe('02'.repeat(192));
+    expect(req.proof.c).toBe('03'.repeat(96));
+    expect(req.validAfter).toBe('0');
+    expect(req.validBefore).toBe('9999');
+  });
+
+  it('rejects a release/nullifier length mismatch', () => {
+    const oneNullifier: BatchProof = { ...proof, nullifiers: [Buffer.alloc(32, 0xbb)] };
+    const releases: BatchRelease[] = [
+      { payeeAddress: PAYEE, amountStroops: '1', spendCounter: '0' },
+      { payeeAddress: PAYEE, amountStroops: '2', spendCounter: '1' },
+    ];
+    expect(() => buildBatchReleaseRequest(oneNullifier, releases, ctx, '1', '1')).toThrow();
   });
 });

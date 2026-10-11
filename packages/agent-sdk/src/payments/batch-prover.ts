@@ -207,6 +207,81 @@ export async function createBatchProof(
   return proveBatch(buildBatchWitness(policy, releases, ctx), artifacts);
 }
 
+/** The JSON body the API relay (and in turn the vault) consumes for a pp/2 batch. */
+export interface BatchReleaseRequest {
+  taskId: string;
+  stepId: string;
+  /** Active payees (G...), in order. */
+  payees: string[];
+  /** Active amounts in stroops, in order. */
+  amounts: string[];
+  /** Active nullifiers as hex, in order (from the proof). */
+  nullifiers: string[];
+  validAfter: string;
+  validBefore: string;
+  /** Policy commitment as hex (circuit output). */
+  commitment: string;
+  /** Groth16 proof components as hex. */
+  proof: { a: string; b: string; c: string };
+}
+
+/**
+ * Convert a {@link BatchProof} + its release set into the request the API relay
+ * accepts. Pure: the client proves locally, then POSTs this; the API never sees
+ * the plaintext policy and cannot forge the proof.
+ */
+export function buildBatchReleaseRequest(
+  proof: BatchProof,
+  releases: BatchRelease[],
+  ctx: BatchContext,
+  taskId: string,
+  stepId: string,
+): BatchReleaseRequest {
+  if (releases.length !== proof.nullifiers.length) {
+    throw new Error('releases and active nullifiers must match in length');
+  }
+  return {
+    taskId,
+    stepId,
+    payees: releases.map((r) => r.payeeAddress),
+    amounts: releases.map((r) => r.amountStroops),
+    nullifiers: proof.nullifiers.map((n) => n.toString('hex')),
+    validAfter: ctx.validAfter,
+    validBefore: ctx.validBefore,
+    commitment: proof.commitment.toString('hex'),
+    proof: {
+      a: proof.proof.a.toString('hex'),
+      b: proof.proof.b.toString('hex'),
+      c: proof.proof.c.toString('hex'),
+    },
+  };
+}
+
+/** The API relay path for a pp/2 batch release. */
+export const BATCH_RELEASE_PATH = '/vault/batch-release-proved';
+
+/**
+ * POST a built batch-release request to the API relay (x-api-key auth, matching
+ * the rest of the SDK). The relay validates and enqueues the worker submission.
+ */
+export async function submitBatchRelease(opts: {
+  apiUrl: string;
+  apiKey: string;
+  request: BatchReleaseRequest;
+  fetchImpl?: typeof fetch;
+}): Promise<unknown> {
+  const f = opts.fetchImpl ?? fetch;
+  const res = await f(opts.apiUrl.replace(/\/+$/, '') + BATCH_RELEASE_PATH, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': opts.apiKey },
+    body: JSON.stringify(opts.request),
+  });
+  if (!res.ok) {
+    throw new Error(`batch release failed: HTTP ${res.status} ${await res.text().catch(() => '')}`);
+  }
+  return res.json();
+}
+
 /** The amount of a single release as its 32-byte public-input scalar (for checks). */
 export function releaseAmountScalar(amountStroops: bigint): Buffer {
   return amountScalar(amountStroops);
