@@ -51,6 +51,7 @@ pub mod fixtures;
 #[cfg(test)]
 mod test;
 
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, log, Address, Bytes, BytesN, Env, Vec};
 
 use crate::{
@@ -217,6 +218,58 @@ impl PolicyVerifier {
         public_inputs: Vec<BytesN<32>>,
     ) -> bool {
         groth16::verify_groth16(&env, &vk, &proof, &public_inputs)
+    }
+
+    /// Store or rotate the Groth16/BLS12-381 verifying key (pp/2). Admin-only.
+    /// After this, [`Self::verify_groth16_stored`] uses the stored VK and
+    /// [`Self::get_groth16_vk_hash`] pins the active circuit version. Storing the
+    /// VK on-chain is what lets the vault call verification with only a proof.
+    pub fn set_groth16_vk(
+        env: Env,
+        admin: Address,
+        vk: groth16::Groth16Vk,
+    ) -> Result<(), VerifierError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(VerifierError::NotInitialized)?;
+        if stored_admin != admin {
+            return Err(VerifierError::Unauthorized);
+        }
+        let vk_hash: BytesN<32> = env.crypto().sha256(&vk.clone().to_xdr(&env)).into();
+        env.storage().persistent().set(&DataKey::Groth16Vk, &vk);
+        env.storage()
+            .instance()
+            .set(&DataKey::Groth16VkHash, &vk_hash);
+        log!(&env, "PolicyVerifier Groth16 VK set: hash={:?}", vk_hash);
+        Ok(())
+    }
+
+    /// Trustless Groth16 verification against the STORED VK (pp/2). The vault
+    /// calls this so it never has to pass the full verifying key. Fail-closed:
+    /// returns `false` if no Groth16 VK has been set.
+    pub fn verify_groth16_stored(
+        env: Env,
+        proof: groth16::Groth16Proof,
+        public_inputs: Vec<BytesN<32>>,
+    ) -> bool {
+        let vk: groth16::Groth16Vk = match env.storage().persistent().get(&DataKey::Groth16Vk) {
+            Some(v) => v,
+            None => return false,
+        };
+        groth16::verify_groth16(&env, &vk, &proof, &public_inputs)
+    }
+
+    /// SHA-256 of the stored Groth16 VK's XDR, so callers can pin the active
+    /// circuit version. Errors with `VkNotSet` if `set_groth16_vk` was never
+    /// called.
+    pub fn get_groth16_vk_hash(env: Env) -> Result<BytesN<32>, VerifierError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Groth16VkHash)
+            .ok_or(VerifierError::VkNotSet)
     }
 
     /// Return the SHA-256 hash of the currently active verifying key.

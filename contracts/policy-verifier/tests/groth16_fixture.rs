@@ -8,7 +8,8 @@
 
 use policy_verifier::groth16::{Groth16Proof, Groth16Vk};
 use policy_verifier::{PolicyVerifier, PolicyVerifierClient};
-use soroban_sdk::{vec, BytesN, Env, Vec};
+use soroban_sdk::testutils::Address as _;
+use soroban_sdk::{vec, Address, BytesN, Env, Vec};
 
 include!("fixture_data.rs");
 
@@ -70,5 +71,25 @@ fn verify_groth16_accepts_valid_and_rejects_tampered() {
     assert!(
         !client.verify_groth16(&vk, &proof, &tampered),
         "tampered public input should be rejected"
+    );
+
+    // Stored-VK path (pp/2 production): the admin pins the VK once, then the
+    // vault verifies with only a proof. Same accept/reject behaviour.
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    client.init(&admin);
+    client.set_groth16_vk(&admin, &vk);
+    assert_eq!(
+        client.get_groth16_vk_hash(),
+        client.get_groth16_vk_hash(),
+        "vk hash is a stable view"
+    );
+    assert!(
+        client.verify_groth16_stored(&proof, &pubs),
+        "stored-VK verify should accept the valid proof"
+    );
+    assert!(
+        !client.verify_groth16_stored(&proof, &tampered),
+        "stored-VK verify should reject a tampered input"
     );
 }

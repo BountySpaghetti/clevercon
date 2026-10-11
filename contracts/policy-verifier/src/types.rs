@@ -11,6 +11,12 @@ pub enum DataKey {
     /// Stored separately so `get_vk_hash` is a cheap 32-byte read rather than
     /// re-hashing the full VK on every view call.
     VkHash,
+    /// The stored Groth16/BLS12-381 verifying key (pp/2), set by
+    /// `set_groth16_vk` and used by `verify_groth16_stored`.
+    Groth16Vk,
+    /// SHA-256 of the stored Groth16 VK's XDR, returned by
+    /// `get_groth16_vk_hash` so callers can pin the active circuit version.
+    Groth16VkHash,
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
