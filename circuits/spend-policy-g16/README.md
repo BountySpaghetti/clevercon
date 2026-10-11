@@ -25,11 +25,14 @@ the vault maps them by this order.
    the commitment, so the commitment format is final. (proven)
 2. **g16-batch** (`policy_batch.circom`, CI circuit): one proof authorizes N
    releases (bounty payout, payroll run) under the same policy; per-release
-   R1/R3/R5 + N nullifiers + an `active` flag so a partial batch's null slots are
-   provable no-ops (nullifier 0, vault skips). Supersedes the single circuit for
-   the production path; the single remains as the N=1 reference.
-3. **g16-extras**: R2 private accumulator, R4 deny-list, R6 calendar windows,
-   selective disclosure.
+   R1/R3/R5/R8 + N nullifiers + an `active` flag so a partial batch's null slots
+   are provable no-ops (nullifier 0, vault skips). Uses the FINAL R1-R8 commitment
+   encoding; the leaf is `H(payee, cap, category)` so one membership proof binds
+   the per-payee cap (R5) and category (R8). Supersedes the single circuit for the
+   production path; the single remains as the N=1 reference.
+3. **g16-accumulator**: R2 (rolling cap) + R7 (velocity), which share the
+   vault-assisted accumulator mechanism.
+4. **g16-extras**: R4 deny-list, R6 calendar windows, selective disclosure.
 
 ## How CI proves it
 

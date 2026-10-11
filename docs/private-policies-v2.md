@@ -75,13 +75,13 @@ least one rule must be enabled (an empty policy is rejected at commit, never
 | R5 | Per-payee limit | allowlist leaf carries `payee_cap` | for the proven payee, `amount <= payee_cap` | payroll, bounty tiers, per-provider caps |
 | R6 | Calendar window | `[start, end]` list, `now` (witness) | `now in some allowed window` | scheduled payroll, grants |
 | R7 | Velocity (count cap) | `max_count`, `window_secs` | `releases_in_window + active <= max_count` | agent rate-limit, metered service calls |
-| R8 | Per-category limit | leaf carries `category`, `cat_ceiling[C]` | for the payee's category, `amount <= cat_ceiling[category]` | service-marketplace budgets by category |
+| R8 | Per-category limit | leaf carries `payee_category`, `cat_ceiling[C]` | for the payee's category, `amount <= cat_ceiling[payee_category]` | service-marketplace budgets by category |
 
 **The allowlist leaf (R3/R5/R8).** The leaf is `H(payee_field, payee_cap,
-category)`. Proving membership (R3) therefore also binds the payee's individual
-cap (R5) and category (R8) without revealing the roster. R5 asserts `amount <=
-payee_cap`; R8 looks up `cat_ceiling[category]` (a small fixed set of `C`
-categories) and asserts `amount <= cat_ceiling[category]`. A disabled rule uses a
+payee_category)`. Proving membership (R3) therefore also binds the payee's
+individual cap (R5) and category (R8) without revealing the roster. R5 asserts
+`amount <= payee_cap`; R8 looks up `cat_ceiling[payee_category]` (a small fixed set
+of `C` categories) and asserts `amount <= cat_ceiling[payee_category]`. A disabled rule uses a
 neutral value (cap/ceiling 0 with the check gated off). This is how one policy can
 say "employee A up to 2,000, employee B up to 5,000" (R5) or "any data-service
 call up to 50, any compute-service call up to 200" (R8), privately.
@@ -137,7 +137,7 @@ policy_encoding = enabled_flags            (8 x Fr, 0/1: R1..R8)
                || R6.windows_root                    (Merkle/hash of calendar windows)
                || R7.max_count || R7.window_secs
                || R8.cat_ceiling[0..C-1]             (per-category ceilings)
-               || category                           (selective-disclosure tag, else 0)
+               || disclosure_tag                     (selective-disclosure tag, else 0)
                || version                            (Fr, = 2 for pp/2)
 
 commitment = H( policy_encoding, salt )              (H = Poseidon/BLS12-381)
