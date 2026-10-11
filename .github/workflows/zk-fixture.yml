@@ -59,6 +59,7 @@ jobs:
           # Hash oracles, used to build the allowlist leaf + Merkle witness off-circuit.
           circom circuits/spend-policy-g16/poseidon2.circom --wasm --prime bls12381 -o build -l "$CLIB"
           circom circuits/spend-policy-g16/poseidon3.circom --wasm --prime bls12381 -o build -l "$CLIB"
+          circom circuits/spend-policy-g16/poseidon4.circom --wasm --prime bls12381 -o build -l "$CLIB"
           # The batch policy circuit (one proof authorizes N releases).
           circom circuits/spend-policy-g16/policy_batch.circom --r1cs --wasm --prime bls12381 -o build -l "$CLIB"
           # Build a satisfiable batch witness (R1 + R3 + R5; 3 active + 1 null slot).

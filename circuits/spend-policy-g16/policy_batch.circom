@@ -5,17 +5,22 @@ pragma circom 2.1.0;
 // verified by a real pairing on-chain. See docs/private-policies-v2.md.
 //
 // Public outputs: commitment, nullifier[N].
-// Public inputs:  payee_field[N], amount[N].
+// Public inputs:  payee_field[N], amount[N], now, running_spend, prior_count.
+//                 (now / running_spend / prior_count are the vault's authenticated
+//                  ledger time and accumulator state, bound by being public.)
 //
-// This is the FINAL R1-R8 commitment encoding. Enforced here per release: R1
-// (ceiling), R3 (allowlist membership), R4 (deny-list above a threshold), R5
-// (per-payee cap), R8 (per-category ceiling). R5 cap and R8 category ride the
-// allowlist leaf = H(payee, cap, category), so one membership proof binds
-// who/limit/category privately. R2/R6/R7 fields are bound into the commitment and
-// enforced in later increments (R2/R7 need the vault accumulator).
-//
-// An `active` flag marks real releases; a null slot is a provable no-op whose
-// nullifier is 0, so a partial batch is cheap and the vault skips zero slots.
+// FINAL R1-R8 commitment encoding; all eight rules enforced:
+//   R1 per-payment ceiling        (per release)
+//   R2 rolling cap over a window  (batch: running_spend + batch_total <= cap)
+//   R3 allowlist Merkle membership(per release)
+//   R4 deny-list above threshold  (per release)
+//   R5 per-payee cap              (per release, from the leaf)
+//   R6 calendar window            (batch: now in some committed window)
+//   R7 velocity (count cap)       (batch: prior_count + active <= max_count)
+//   R8 per-category ceiling       (per release, category from the leaf)
+// R5 cap and R8 category ride the allowlist leaf = H(payee, cap, category), so one
+// membership proof binds who/limit/category privately. An `active` flag marks real
+// releases; a null slot is a provable no-op whose nullifier is 0.
 //
 // Hash: circomlib Poseidon over BLS12-381 (production pins BLS12-381-native
 // constants before the trusted setup; see the package README).
@@ -50,13 +55,16 @@ template MerkleRoot(DEPTH) {
     root <== cur[DEPTH];
 }
 
-template PolicyBatch(DEPTH, N, C) {
-    // ---- public inputs (vault-supplied, one per release) ----
+template PolicyBatch(DEPTH, N, C, W) {
+    // ---- public inputs ----
     signal input payee_field[N];
     signal input amount[N];
+    signal input now;             // vault-supplied ledger timestamp (R6)
+    signal input running_spend;   // vault accumulator: spend in window (R2)
+    signal input prior_count;     // vault accumulator: releases in window (R7)
 
     // ---- shared policy (private; the full R1-R8 commitment encoding) ----
-    signal input en[8];                 // enabled flags R1..R8 (0/1)
+    signal input en[8];
     signal input r1_ceiling;
     signal input r2_cap;
     signal input r2_window;
@@ -68,17 +76,21 @@ template PolicyBatch(DEPTH, N, C) {
     signal input r6_windows_root;
     signal input r7_max_count;
     signal input r7_window;
-    signal input r8_cat_ceiling[C];     // per-category ceilings
-    signal input disclosure_tag;        // selective-disclosure tag, else 0
+    signal input r8_cat_ceiling[C];
+    signal input disclosure_tag;
     signal input salt;
+
+    // ---- R6 private witnesses: the calendar windows (bound to the root) ----
+    signal input r6_win_start[W];
+    signal input r6_win_end[W];
 
     // ---- per-release private witnesses ----
     signal input active[N];
     signal input spend_counter[N];
     signal input r3_path[N][DEPTH];
     signal input r3_index[N][DEPTH];
-    signal input payee_cap[N];          // R5: per-payee cap, in the leaf
-    signal input payee_category[N];     // R8: payee's category (0..C-1), in the leaf
+    signal input payee_cap[N];
+    signal input payee_category[N];
 
     // ---- public outputs ----
     signal output commitment;
@@ -86,8 +98,8 @@ template PolicyBatch(DEPTH, N, C) {
 
     var VERSION = 2;
 
-    // Enabled flags boolean, at least one active, and the leaf-riding rules
-    // (R5, R8) require R3 since their data lives in the proven leaf.
+    // Enabled flags boolean, at least one active; leaf-riding rules (R5, R8)
+    // require R3 since their data lives in the proven leaf.
     var ensum = 0;
     for (var i = 0; i < 8; i++) {
         en[i] * (en[i] - 1) === 0;
@@ -99,8 +111,15 @@ template PolicyBatch(DEPTH, N, C) {
     en[4] * (1 - en[2]) === 0; // R5 => R3
     en[7] * (1 - en[2]) === 0; // R8 => R3
 
-    // Commitment over the full policy encoding (shared across the batch),
-    // chained to stay within Poseidon arity.
+    // Range-bind the vault-supplied public values.
+    component nowBits = Num2Bits(64);
+    nowBits.in <== now;
+    component rsBits = Num2Bits(128);
+    rsBits.in <== running_spend;
+    component pcBits = Num2Bits(64);
+    pcBits.in <== prior_count;
+
+    // Commitment over the full policy encoding (shared across the batch).
     component h1 = Poseidon(10);
     h1.inputs[0] <== en[0];
     h1.inputs[1] <== en[1];
@@ -142,7 +161,35 @@ template PolicyBatch(DEPTH, N, C) {
     hc.inputs[3] <== salt;
     commitment <== hc.out;
 
-    // Per-release checks. Gates are kept degree-2 via intermediate signals.
+    // R6 (batch-level): bind the windows to the committed root, then require
+    // `now` to fall inside at least one window.
+    component winHash = Poseidon(2 * W);
+    for (var w = 0; w < W; w++) {
+        winHash.inputs[2 * w] <== r6_win_start[w];
+        winHash.inputs[2 * w + 1] <== r6_win_end[w];
+    }
+    en[5] * (winHash.out - r6_windows_root) === 0;
+
+    component geS[W];
+    component leE[W];
+    signal inWin[W];
+    var inWinSum = 0;
+    signal inWinAcc[W + 1];
+    inWinAcc[0] <== 0;
+    for (var w = 0; w < W; w++) {
+        geS[w] = GreaterEqThan(64);
+        geS[w].in[0] <== now;
+        geS[w].in[1] <== r6_win_start[w];
+        leE[w] = LessEqThan(64);
+        leE[w].in[0] <== now;
+        leE[w].in[1] <== r6_win_end[w];
+        inWin[w] <== geS[w].out * leE[w].out;
+        // OR accumulation: acc' = acc + inWin - acc*inWin (stays boolean).
+        inWinAcc[w + 1] <== inWinAcc[w] + inWin[w] - inWinAcc[w] * inWin[w];
+    }
+    en[5] * (1 - inWinAcc[W]) === 0;
+
+    // Per-release checks + batch accumulators.
     component amountBits[N];
     component leafH[N];
     component mt[N];
@@ -162,6 +209,9 @@ template PolicyBatch(DEPTH, N, C) {
     signal selParts[N][C];
     signal selCeil[N];
     signal catSum[N];
+    signal batchAmt[N];
+    var batchTotalExpr = 0;
+    var activeCountExpr = 0;
 
     for (var k = 0; k < N; k++) {
         active[k] * (active[k] - 1) === 0;
@@ -176,8 +226,7 @@ template PolicyBatch(DEPTH, N, C) {
         g1[k] <== active[k] * en[0];
         g1[k] * (1 - le1[k].out) === 0;
 
-        // R3: active AND enabled => membership. Leaf = H(payee, cap, category),
-        // so membership binds R5 (cap) and R8 (category).
+        // R3: active AND enabled => membership. Leaf = H(payee, cap, category).
         leafH[k] = Poseidon(3);
         leafH[k].inputs[0] <== payee_field[k];
         leafH[k].inputs[1] <== payee_cap[k];
@@ -212,7 +261,6 @@ template PolicyBatch(DEPTH, N, C) {
         g5[k] * (1 - le5[k].out) === 0;
 
         // R8: active AND enabled => amount <= ceiling for the payee's category.
-        // Select cat_ceiling[payee_category] via equality indicators.
         var sumParts = 0;
         var sumEq = 0;
         for (var c = 0; c < C; c++) {
@@ -226,12 +274,16 @@ template PolicyBatch(DEPTH, N, C) {
         selCeil[k] <== sumParts;
         catSum[k] <== sumEq;
         g8[k] <== active[k] * en[7];
-        // When R8 is active the category must be valid (matches exactly one).
         g8[k] * (catSum[k] - 1) === 0;
         le8[k] = LessEqThan(128);
         le8[k].in[0] <== amount[k];
         le8[k].in[1] <== selCeil[k];
         g8[k] * (1 - le8[k].out) === 0;
+
+        // Batch accumulators (null slots contribute 0).
+        batchAmt[k] <== active[k] * amount[k];
+        batchTotalExpr += batchAmt[k];
+        activeCountExpr += active[k];
 
         // Nullifier: 0 for a null slot, a distinct spend-once value otherwise.
         hn[k] = Poseidon(4);
@@ -241,6 +293,24 @@ template PolicyBatch(DEPTH, N, C) {
         hn[k].inputs[3] <== spend_counter[k];
         nullifier[k] <== active[k] * hn[k].out;
     }
+
+    signal batchTotal;
+    batchTotal <== batchTotalExpr;
+    signal activeCount;
+    activeCount <== activeCountExpr;
+
+    // R2 (batch-level): running_spend + batch_total <= cap.
+    component le2 = LessEqThan(132);
+    le2.in[0] <== running_spend + batchTotal;
+    le2.in[1] <== r2_cap;
+    en[1] * (1 - le2.out) === 0;
+
+    // R7 (batch-level): prior_count + active_count <= max_count.
+    component le7 = LessEqThan(70);
+    le7.in[0] <== prior_count + activeCount;
+    le7.in[1] <== r7_max_count;
+    en[6] * (1 - le7.out) === 0;
 }
 
-component main {public [payee_field, amount]} = PolicyBatch(16, 4, 4);
+component main {public [payee_field, amount, now, running_spend, prior_count]} =
+    PolicyBatch(16, 4, 4, 2);

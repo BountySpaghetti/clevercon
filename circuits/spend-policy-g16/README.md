@@ -24,15 +24,18 @@ the vault maps them by this order.
    leaf = `H(payee_field, cap)`; requires R3). Binds the full policy encoding into
    the commitment, so the commitment format is final. (proven)
 2. **g16-batch** (`policy_batch.circom`, CI circuit): one proof authorizes N
-   releases (bounty payout, payroll run) under the same policy; per-release
-   R1/R3/R5/R8 + N nullifiers + an `active` flag so a partial batch's null slots
-   are provable no-ops (nullifier 0, vault skips). Uses the FINAL R1-R8 commitment
-   encoding; the leaf is `H(payee, cap, category)` so one membership proof binds
-   the per-payee cap (R5) and category (R8). Supersedes the single circuit for the
-   production path; the single remains as the N=1 reference.
-3. **g16-accumulator**: R2 (rolling cap) + R7 (velocity), which share the
-   vault-assisted accumulator mechanism.
-4. **g16-extras**: R4 deny-list, R6 calendar windows, selective disclosure.
+   releases (bounty payout, payroll run) under the same policy, enforcing the FULL
+   R1-R8 rule set + N nullifiers + an `active` flag so a partial batch's null slots
+   are provable no-ops (nullifier 0, vault skips). Per-release: R1 ceiling, R3
+   membership, R4 deny-list, R5 per-payee cap, R8 per-category ceiling (R5 cap and
+   R8 category ride the leaf `H(payee, cap, category)`). Batch-level: R2 rolling
+   cap and R7 velocity against the vault's authenticated `running_spend` /
+   `prior_count`, and R6 calendar against the vault's `now`. Uses the final R1-R8
+   commitment encoding. Supersedes the single circuit; the single remains as the
+   N=1 reference.
+
+Next: productionize (trusted-setup ceremony, client prover in the SDK, vault
+wiring); a fully in-circuit private accumulator for R2/R7 is a later hardening.
 
 ## How CI proves it
 
