@@ -68,15 +68,15 @@ async function main() {
   const input = {
     payee_field,
     amount,
-    en: ['1', '0', '1', '0', '1', '0', '0', '1'], // R1, R3, R5, R8 enabled
+    en: ['1', '0', '1', '1', '1', '0', '0', '1'], // R1, R3, R4, R5, R8 enabled
     r1_ceiling: CEILING.toString(),
     r2_cap: '0',
     r2_window: '0',
     r2_delegate: '0',
     r3_root: r3Root.toString(),
     r3_depth: DEPTH.toString(),
-    r4_entries: ['0', '0', '0', '0'],
-    r4_threshold: '0',
+    r4_entries: ['111', '222', '333', '444'], // deny-list, none == payee
+    r4_threshold: '50', // amount 60 >= 50, so the deny-list applies
     r6_windows_root: '0',
     r7_max_count: '0',
     r7_window: '0',
@@ -93,7 +93,7 @@ async function main() {
 
   fs.writeFileSync('build/policy-input.json', JSON.stringify(input, null, 2));
   console.log('r3_root =', r3Root.toString());
-  console.log(`wrote build/policy-input.json (batch N=${N}: R1+R3+R5+R8, 3 active + 1 null)`);
+  console.log(`wrote build/policy-input.json (batch N=${N}: R1+R3+R4+R5+R8, 3 active + 1 null)`);
 }
 
 main().catch((e) => {

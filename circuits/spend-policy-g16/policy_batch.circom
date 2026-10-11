@@ -8,10 +8,11 @@ pragma circom 2.1.0;
 // Public inputs:  payee_field[N], amount[N].
 //
 // This is the FINAL R1-R8 commitment encoding. Enforced here per release: R1
-// (ceiling), R3 (allowlist membership), R5 (per-payee cap), R8 (per-category
-// ceiling). R5 cap and R8 category ride the allowlist leaf = H(payee, cap,
-// category), so one membership proof binds who/limit/category privately. R2/R4/
-// R6/R7 fields are bound into the commitment and enforced in later increments.
+// (ceiling), R3 (allowlist membership), R4 (deny-list above a threshold), R5
+// (per-payee cap), R8 (per-category ceiling). R5 cap and R8 category ride the
+// allowlist leaf = H(payee, cap, category), so one membership proof binds
+// who/limit/category privately. R2/R6/R7 fields are bound into the commitment and
+// enforced in later increments (R2/R7 need the vault accumulator).
 //
 // An `active` flag marks real releases; a null slot is a provable no-op whose
 // nullifier is 0, so a partial batch is cheap and the vault skips zero slots.
@@ -146,12 +147,16 @@ template PolicyBatch(DEPTH, N, C) {
     component leafH[N];
     component mt[N];
     component le1[N];
+    component ge4[N];
+    component deq[N][4];
     component le5[N];
     component catEq[N][C];
     component le8[N];
     component hn[N];
     signal g1[N];
     signal g3[N];
+    signal g4a[N];
+    signal g4[N];
     signal g5[N];
     signal g8[N];
     signal selParts[N][C];
@@ -185,6 +190,19 @@ template PolicyBatch(DEPTH, N, C) {
         }
         g3[k] <== active[k] * en[2];
         g3[k] * (mt[k].root - r3_root) === 0;
+
+        // R4: active AND enabled AND amount >= threshold => payee not denied.
+        ge4[k] = GreaterEqThan(128);
+        ge4[k].in[0] <== amount[k];
+        ge4[k].in[1] <== r4_threshold;
+        g4a[k] <== active[k] * en[3];
+        g4[k] <== g4a[k] * ge4[k].out;
+        for (var m = 0; m < 4; m++) {
+            deq[k][m] = IsEqual();
+            deq[k][m].in[0] <== payee_field[k];
+            deq[k][m].in[1] <== r4_entries[m];
+            g4[k] * deq[k][m].out === 0;
+        }
 
         // R5: active AND enabled => amount <= per-payee cap.
         le5[k] = LessEqThan(128);
