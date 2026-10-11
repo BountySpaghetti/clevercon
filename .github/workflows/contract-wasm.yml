@@ -19,7 +19,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          # soroban-sdk 25.3 requires wasm32v1-none (Rust 1.84+); the plain
+          # wasm32-unknown-unknown target enables features Soroban rejects.
+          targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
 
       - name: Build each contract to wasm
@@ -28,11 +30,11 @@ jobs:
           for c in policy-verifier agent-vault registry; do
             if [ -f "contracts/$c/Cargo.toml" ]; then
               echo "== building $c =="
-              cargo build --release --target wasm32-unknown-unknown \
+              cargo build --release --target wasm32v1-none \
                 --manifest-path "contracts/$c/Cargo.toml"
             fi
           done
-          find contracts -path '*/wasm32-unknown-unknown/release/*.wasm' \
+          find contracts -path '*/wasm32v1-none/release/*.wasm' \
             -not -path '*/deps/*' -exec cp {} wasm/ \;
           ls -la wasm
 
