@@ -73,7 +73,7 @@ least one rule must be enabled (an empty policy is rejected at commit, never
 | R3 | Allowlist (deep) | `root`, depth `D = 16` | `payee in allowlist` (Merkle membership, 65,536 payees) | payroll, disbursement, approved providers |
 | R4 | Deny-list + threshold | `entries[K]`, `threshold` | `payee not in deny-list` whenever `amount >= threshold` | compliance |
 | R5 | Per-payee limit | allowlist leaf carries `payee_cap` | for the proven payee, `amount <= payee_cap` | payroll, bounty tiers, per-provider caps |
-| R6 | Calendar window | `[start, end]` list, `now` (witness) | `now in some allowed window` | scheduled payroll, grants |
+| R6 | Calendar window | `[start, end]` list; public `[valid_after, valid_before]` | the validity window sits inside some calendar window | scheduled payroll, grants |
 | R7 | Velocity (count cap) | `max_count`, `window_secs` | `releases_in_window + active <= max_count` | agent rate-limit, metered service calls |
 | R8 | Per-category limit | leaf carries `payee_category`, `cat_ceiling[C]` | for the payee's category, `amount <= cat_ceiling[payee_category]` | service-marketplace budgets by category |
 
@@ -91,6 +91,14 @@ amount, so an autonomous agent cannot drain a budget through many small legitima
 payments and metered per-call service spend can be rate-limited. Like R2 it is
 vault-assisted: the vault keeps a per-commitment release-count accumulator and the
 circuit proves `prior_count + active_releases <= max_count`.
+
+**R6 (calendar)** cannot pin an exact settlement time into the proof (ledger time
+advances between proving and settlement). Instead the prover picks a validity
+window `[valid_after, valid_before]` (public inputs), the circuit proves that
+window sits inside some committed calendar window (`valid_after >= start_w` and
+`valid_before <= end_w` for some `w`, with the windows bound to `R6.windows_root`),
+and the **vault** checks `valid_after <= ledger_time <= valid_before` at settlement.
+This reveals only the chosen sub-window, never the full calendar.
 
 **Batch disbursement.** One proof may authorize `N` releases (e.g., pay 50 bounty
 winners at once) instead of one. The circuit proves every tuple

@@ -298,6 +298,9 @@ pub enum VaultError {
     BatchSizeInvalid = 34,
     /// Two releases in the same batch carried the same nullifier.
     BatchDuplicateNullifier = 35,
+    /// The current ledger time is outside the proof's validity window
+    /// `[valid_after, valid_before]` (the R6 calendar check).
+    OutsideValidityWindow = 36,
 }
 
 // Storage keys
@@ -1433,8 +1436,10 @@ impl AgentVault {
     ///
     /// `payees`, `amounts`, and `nullifiers` are the ACTIVE releases (length
     /// `1..=BATCH_N`), in the order the prover placed them; the circuit's trailing
-    /// null slots are reconstructed here as zero field elements. `step_id` makes
-    /// the whole batch idempotent.
+    /// null slots are reconstructed here as zero field elements. `valid_after` /
+    /// `valid_before` are the proof's R6 validity window: the ledger time must lie
+    /// within it (checked here) and the proof shows that window is inside the
+    /// private calendar. `step_id` makes the whole batch idempotent.
     pub fn release_payment_proved_batch(
         env: Env,
         orchestrator: Address,
@@ -1444,6 +1449,8 @@ impl AgentVault {
         payees: Vec<Address>,
         amounts: Vec<i128>,
         nullifiers: Vec<BytesN<32>>,
+        valid_after: u64,
+        valid_before: u64,
         proof: Groth16Proof,
     ) -> Result<bool, VaultError> {
         orchestrator.require_auth();
@@ -1452,6 +1459,13 @@ impl AgentVault {
         let m = payees.len();
         if m == 0 || m > BATCH_N || amounts.len() != m || nullifiers.len() != m {
             return Err(VaultError::BatchSizeInvalid);
+        }
+
+        // R6 liveness: the ledger time must be inside the proof's validity window.
+        // The proof separately proves that window is within the private calendar.
+        let ledger_time = env.ledger().timestamp();
+        if ledger_time < valid_after || ledger_time > valid_before {
+            return Err(VaultError::OutsideValidityWindow);
         }
 
         let task_key = DataKey::Task(task_id);
@@ -1535,8 +1549,7 @@ impl AgentVault {
         Self::extend_instance_ttl(&env);
 
         // Authenticated accumulator state the circuit is proven against: the prior
-        // running spend (R2) and release count (R7), and the ledger time (R6).
-        let now = env.ledger().timestamp();
+        // running spend (R2) and release count (R7).
         let running_spend = task.spent as u128;
         let prior_count: u64 = env
             .storage()
@@ -1546,7 +1559,7 @@ impl AgentVault {
 
         // Reconstruct the public inputs in the circuit's EXACT order:
         //   [commitment, nullifier[0..N], payee_field[0..N], amount[0..N],
-        //    now, running_spend, prior_count]
+        //    valid_after, valid_before, running_spend, prior_count]
         // with trailing null slots (m..N) as zero field elements.
         let zero32: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
         let mut pis: Vec<BytesN<32>> = vec![&env, commitment.clone()];
@@ -1571,7 +1584,8 @@ impl AgentVault {
                 zero32.clone()
             });
         }
-        pis.push_back(Self::u64_to_field(&env, now));
+        pis.push_back(Self::u64_to_field(&env, valid_after));
+        pis.push_back(Self::u64_to_field(&env, valid_before));
         pis.push_back(Self::u128_to_field(&env, running_spend));
         pis.push_back(Self::u64_to_field(&env, prior_count));
 

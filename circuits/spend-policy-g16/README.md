@@ -30,9 +30,10 @@ the vault maps them by this order.
    membership, R4 deny-list, R5 per-payee cap, R8 per-category ceiling (R5 cap and
    R8 category ride the leaf `H(payee, cap, category)`). Batch-level: R2 rolling
    cap and R7 velocity against the vault's authenticated `running_spend` /
-   `prior_count`, and R6 calendar against the vault's `now`. Uses the final R1-R8
-   commitment encoding. Supersedes the single circuit; the single remains as the
-   N=1 reference.
+   `prior_count`, and R6 calendar via a public `[valid_after, valid_before]`
+   validity window (the circuit proves it sits inside the private calendar; the
+   vault checks ledger time falls within it). Uses the final R1-R8 commitment
+   encoding. Supersedes the single circuit; the single remains as the N=1 reference.
 
 Next: productionize (trusted-setup ceremony, client prover in the SDK, vault
 wiring); a fully in-circuit private accumulator for R2/R7 is a later hardening.

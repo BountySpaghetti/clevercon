@@ -5,9 +5,10 @@ pragma circom 2.1.0;
 // verified by a real pairing on-chain. See docs/private-policies-v2.md.
 //
 // Public outputs: commitment, nullifier[N].
-// Public inputs:  payee_field[N], amount[N], now, running_spend, prior_count.
-//                 (now / running_spend / prior_count are the vault's authenticated
-//                  ledger time and accumulator state, bound by being public.)
+// Public inputs:  payee_field[N], amount[N], valid_after, valid_before,
+//                 running_spend, prior_count. valid_after/valid_before are the
+//                 prover's R6 validity window; running_spend/prior_count are the
+//                 vault's authenticated accumulator state. All bound by being public.
 //
 // FINAL R1-R8 commitment encoding; all eight rules enforced:
 //   R1 per-payment ceiling        (per release)
@@ -15,7 +16,7 @@ pragma circom 2.1.0;
 //   R3 allowlist Merkle membership(per release)
 //   R4 deny-list above threshold  (per release)
 //   R5 per-payee cap              (per release, from the leaf)
-//   R6 calendar window            (batch: now in some committed window)
+//   R6 calendar window            (batch: [valid_after,valid_before] in a window)
 //   R7 velocity (count cap)       (batch: prior_count + active <= max_count)
 //   R8 per-category ceiling       (per release, category from the leaf)
 // R5 cap and R8 category ride the allowlist leaf = H(payee, cap, category), so one
@@ -59,7 +60,11 @@ template PolicyBatch(DEPTH, N, C, W) {
     // ---- public inputs ----
     signal input payee_field[N];
     signal input amount[N];
-    signal input now;             // vault-supplied ledger timestamp (R6)
+    // R6: the prover's chosen validity window. The circuit proves this window is
+    // inside the private calendar; the vault separately checks ledger time falls
+    // within it, so settlement needs no exact timestamp pinned into the proof.
+    signal input valid_after;
+    signal input valid_before;
     signal input running_spend;   // vault accumulator: spend in window (R2)
     signal input prior_count;     // vault accumulator: releases in window (R7)
 
@@ -112,8 +117,10 @@ template PolicyBatch(DEPTH, N, C, W) {
     en[7] * (1 - en[2]) === 0; // R8 => R3
 
     // Range-bind the vault-supplied public values.
-    component nowBits = Num2Bits(64);
-    nowBits.in <== now;
+    component vaBits = Num2Bits(64);
+    vaBits.in <== valid_after;
+    component vbBits = Num2Bits(64);
+    vbBits.in <== valid_before;
     component rsBits = Num2Bits(128);
     rsBits.in <== running_spend;
     component pcBits = Num2Bits(64);
@@ -161,8 +168,10 @@ template PolicyBatch(DEPTH, N, C, W) {
     hc.inputs[3] <== salt;
     commitment <== hc.out;
 
-    // R6 (batch-level): bind the windows to the committed root, then require
-    // `now` to fall inside at least one window.
+    // R6 (batch-level): bind the committed windows to their root, require the
+    // validity window to be well-formed, then require it to sit inside at least
+    // one calendar window. The vault checks ledger time is within [valid_after,
+    // valid_before], so this holds at settlement with no exact timestamp pinned.
     component winHash = Poseidon(2 * W);
     for (var w = 0; w < W; w++) {
         winHash.inputs[2 * w] <== r6_win_start[w];
@@ -170,18 +179,24 @@ template PolicyBatch(DEPTH, N, C, W) {
     }
     en[5] * (winHash.out - r6_windows_root) === 0;
 
+    component vaLeVb = LessEqThan(64);
+    vaLeVb.in[0] <== valid_after;
+    vaLeVb.in[1] <== valid_before;
+    en[5] * (1 - vaLeVb.out) === 0;
+
     component geS[W];
     component leE[W];
     signal inWin[W];
-    var inWinSum = 0;
     signal inWinAcc[W + 1];
     inWinAcc[0] <== 0;
     for (var w = 0; w < W; w++) {
+        // [valid_after, valid_before] subset of [start_w, end_w]:
+        // valid_after >= start_w AND valid_before <= end_w.
         geS[w] = GreaterEqThan(64);
-        geS[w].in[0] <== now;
+        geS[w].in[0] <== valid_after;
         geS[w].in[1] <== r6_win_start[w];
         leE[w] = LessEqThan(64);
-        leE[w].in[0] <== now;
+        leE[w].in[0] <== valid_before;
         leE[w].in[1] <== r6_win_end[w];
         inWin[w] <== geS[w].out * leE[w].out;
         // OR accumulation: acc' = acc + inWin - acc*inWin (stays boolean).
@@ -312,5 +327,5 @@ template PolicyBatch(DEPTH, N, C, W) {
     en[6] * (1 - le7.out) === 0;
 }
 
-component main {public [payee_field, amount, now, running_spend, prior_count]} =
+component main {public [payee_field, amount, valid_after, valid_before, running_spend, prior_count]} =
     PolicyBatch(16, 4, 4, 2);

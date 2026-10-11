@@ -21,8 +21,10 @@ const R2_CAP = 200n;
 // R7 (velocity): prior_count + active_count (3) <= max_count.
 const PRIOR_COUNT = 2n;
 const R7_MAX_COUNT = 10n;
-// R6 (calendar): now falls inside window 0.
-const NOW = 1500n;
+// R6 (calendar): the validity window [valid_after, valid_before] sits inside
+// calendar window 0 ([1000, 2000]).
+const VALID_AFTER = 1200n;
+const VALID_BEFORE = 1800n;
 const WIN_START = [1000n, 5000n];
 const WIN_END = [2000n, 6000n];
 // R4 (deny-list): entries, none equal to the payee; threshold below amount.
@@ -97,7 +99,8 @@ async function main() {
   const input = {
     payee_field,
     amount,
-    now: NOW.toString(),
+    valid_after: VALID_AFTER.toString(),
+    valid_before: VALID_BEFORE.toString(),
     running_spend: RUNNING_SPEND.toString(),
     prior_count: PRIOR_COUNT.toString(),
     en: ['1', '1', '1', '1', '1', '1', '1', '1'], // all R1-R8 enabled

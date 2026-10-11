@@ -4291,7 +4291,8 @@ fn test_release_payment_proved_batch_happy_path() {
     ];
     let proof = dummy_groth16_proof(&s.env);
 
-    // One proof authorizes all three transfers.
+    // One proof authorizes all three transfers. The default test ledger time is
+    // 0, which lies inside the [0, u64::MAX] validity window.
     let ok = s.client.release_payment_proved_batch(
         &s.orchestrator,
         &task_id,
@@ -4300,6 +4301,8 @@ fn test_release_payment_proved_batch_happy_path() {
         &payees,
         &amounts,
         &nullifiers,
+        &0u64,
+        &u64::MAX,
         &proof,
     );
     assert!(ok);
@@ -4321,6 +4324,8 @@ fn test_release_payment_proved_batch_happy_path() {
         &one_payee,
         &one,
         &replay,
+        &0u64,
+        &u64::MAX,
         &proof,
     );
     assert!(res.is_err());
@@ -4350,12 +4355,50 @@ fn test_release_payment_proved_batch_rejects_and_moves_no_funds() {
         &payees,
         &amounts,
         &nullifiers,
+        &0u64,
+        &u64::MAX,
         &proof,
     );
     assert!(res.is_err());
     // Fail-closed: no funds moved, nothing spent.
     assert_eq!(s.token_client.balance(&payee), 0);
     assert_eq!(s.client.get_task(&task_id).unwrap().spent, 0);
+}
+
+#[test]
+fn test_release_payment_proved_batch_rejects_outside_validity_window() {
+    let s = setup_policy();
+    s.client.set_policy_verifier(&s.admin, &s.verifier_id);
+    s.verifier.configure(&VerifyMode::AcceptAll);
+    s.env.ledger().set_timestamp(5000);
+
+    let c = commitment_of(&s.env, 9);
+    let task_id = s
+        .client
+        .create_task_with_policy(&s.orchestrator, &s.usdc_sac, &5_000, &c);
+    let payee = Address::generate(&s.env);
+    let payees = soroban_sdk::vec![&s.env, payee.clone()];
+    let amounts = soroban_sdk::vec![&s.env, 400i128];
+    let nullifiers = soroban_sdk::vec![&s.env, nullifier_of(&s.env, 40)];
+    let proof = dummy_groth16_proof(&s.env);
+
+    // Ledger time 5000 is outside the validity window [0, 1000]: the release is
+    // rejected before the verifier is even contacted, and no funds move.
+    let res = s.client.try_release_payment_proved_batch(
+        &s.orchestrator,
+        &task_id,
+        &1,
+        &s.usdc_sac,
+        &payees,
+        &amounts,
+        &nullifiers,
+        &0u64,
+        &1000u64,
+        &proof,
+    );
+    assert!(res.is_err());
+    assert_eq!(s.token_client.balance(&payee), 0);
+    assert_eq!(s.verifier.calls(), 0);
 }
 
 // ── Phase 1: policy commitment & mutual exclusion ──────────────────────
