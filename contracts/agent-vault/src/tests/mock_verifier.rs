@@ -21,7 +21,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Bytes, BytesN,
-    Env,
+    Env, Vec,
 };
 
 #[contracterror]
@@ -111,6 +111,31 @@ impl MockVerifier {
                     .expect("ExpectBinding mode requires set_expected first");
                 expected.payee == payee && expected.amount == amount
             }
+        }
+    }
+
+    /// The pp/2 Groth16 entry point `release_payment_proved_batch` calls. Records
+    /// the invocation and returns a verdict per the configured mode; the public
+    /// inputs are opaque to the mock (byte-for-byte binding is exercised against
+    /// the real verifier in the zk-fixture CI).
+    pub fn verify_groth16_stored(
+        env: Env,
+        _proof: crate::Groth16Proof,
+        _public_inputs: Vec<BytesN<32>>,
+    ) -> bool {
+        let calls: u32 = env.storage().instance().get(&DataKey::Calls).unwrap_or(0);
+        env.storage().instance().set(&DataKey::Calls, &(calls + 1));
+
+        let mode: VerifyMode = env
+            .storage()
+            .instance()
+            .get(&DataKey::Mode)
+            .unwrap_or(VerifyMode::RejectAll);
+
+        match mode {
+            VerifyMode::AcceptAll | VerifyMode::ExpectBinding => true,
+            VerifyMode::RejectAll => false,
+            VerifyMode::Trap => panic_with_error!(&env, MockVerifierError::Trapped),
         }
     }
 }

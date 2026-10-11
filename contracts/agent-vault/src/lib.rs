@@ -25,8 +25,9 @@
 //!    per-asset `AssetSupported` flags so `get_supported_assets` and `is_supported_asset` never disagree.
 
 use soroban_sdk::contracterror;
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractclient, contractevent, contractimpl, contracttype, log, token, Address,
+    contract, contractclient, contractevent, contractimpl, contracttype, log, token, vec, Address,
     Bytes, BytesN, Env, String, Vec,
 };
 
@@ -51,6 +52,27 @@ pub trait PolicyVerifier {
         nullifier: BytesN<32>,
         proof: Bytes,
     ) -> bool;
+
+    /// pp/2 trustless Groth16/BLS12-381 verification against the verifier's
+    /// stored VK. The vault assembles `public_inputs` in the circuit's exact
+    /// order and only moves funds on `true`. Mirrors
+    /// `PolicyVerifier::verify_groth16_stored`.
+    fn verify_groth16_stored(
+        env: Env,
+        proof: Groth16Proof,
+        public_inputs: Vec<BytesN<32>>,
+    ) -> bool;
+}
+
+/// A Groth16 proof over BLS12-381 (uncompressed points), structurally identical
+/// to the policy-verifier's `Groth16Proof` so the cross-contract call encodes to
+/// the same ScVal: A in G1 (96 bytes), B in G2 (192), C in G1 (96).
+#[contracttype]
+#[derive(Clone)]
+pub struct Groth16Proof {
+    pub a: BytesN<96>,
+    pub b: BytesN<192>,
+    pub c: BytesN<96>,
 }
 
 // Events
@@ -274,6 +296,11 @@ pub enum VaultError {
     /// This nullifier has already been consumed for this task. Rejected as a
     /// replay before the verifier is contacted.
     NullifierAlreadyUsed = 33,
+    /// A batched proof-gated release had an empty, oversized, or mismatched
+    /// set of payees/amounts/nullifiers.
+    BatchSizeInvalid = 34,
+    /// Two releases in the same batch carried the same nullifier.
+    BatchDuplicateNullifier = 35,
 }
 
 // Storage keys
@@ -330,6 +357,10 @@ pub enum DataKey {
     /// Enumerable index of a task's consumed nullifiers, for unit TTL refresh
     /// and cleanup on finalization. Mirrors [`DataKey::TaskStepIds`].
     TaskNullifierIds(u64),
+    /// Per-task count of proof-gated releases so far, the authenticated
+    /// `prior_count` the pp/2 batch circuit's velocity rule (R7) is proven
+    /// against. `task.spent` serves the same role as `running_spend` for R2.
+    TaskReleaseCount(u64),
 }
 
 // Data structs
@@ -472,6 +503,11 @@ const MAX_USER_TASK_INFOS_PAGE_SIZE: u32 = 50;
 /// Bounds per-task idempotency storage. Normal plans are far smaller; the cap
 /// prevents a hostile orchestrator from creating unbounded persistent keys.
 const MAX_RELEASE_STEPS_PER_TASK: u32 = 256;
+
+/// Batch size of the pp/2 spend-policy circuit (`policy_batch.circom`, N=4). The
+/// vault reconstructs exactly this many slots; the active releases come first and
+/// the remainder are zero-padded null slots, matching the circuit.
+const BATCH_N: u32 = 4;
 
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280; // ~1 day
 const PERSISTENT_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
@@ -1388,6 +1424,270 @@ impl AgentVault {
         );
 
         Ok(true)
+    }
+
+    /// Proof-gated BATCH release (pp/2). One Groth16 proof authorizes up to
+    /// `BATCH_N` transfers under the task's private policy, verified on-chain by a
+    /// real BLS12-381 pairing. The public inputs are reconstructed here in the
+    /// circuit's exact order and checked against the verifier's stored VK; funds
+    /// move only on a `true`. Mirrors [`Self::release_payment_proved`]'s guards
+    /// and checks-effects-interactions ordering, extended to N releases plus the
+    /// R2 (running spend) and R7 (release count) accumulators.
+    ///
+    /// `payees`, `amounts`, and `nullifiers` are the ACTIVE releases (length
+    /// `1..=BATCH_N`), in the order the prover placed them; the circuit's trailing
+    /// null slots are reconstructed here as zero field elements. `step_id` makes
+    /// the whole batch idempotent.
+    pub fn release_payment_proved_batch(
+        env: Env,
+        orchestrator: Address,
+        task_id: u64,
+        step_id: u64,
+        asset: Address,
+        payees: Vec<Address>,
+        amounts: Vec<i128>,
+        nullifiers: Vec<BytesN<32>>,
+        proof: Groth16Proof,
+    ) -> Result<bool, VaultError> {
+        orchestrator.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let m = payees.len();
+        if m == 0 || m > BATCH_N || amounts.len() != m || nullifiers.len() != m {
+            return Err(VaultError::BatchSizeInvalid);
+        }
+
+        let task_key = DataKey::Task(task_id);
+        let mut task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        let commitment = task
+            .policy_commitment
+            .clone()
+            .ok_or(VaultError::NoPolicyCommitment)?;
+
+        if task.completed {
+            return Err(VaultError::TaskAlreadyCompleted);
+        }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+        if task.orchestrator != orchestrator {
+            return Err(VaultError::NotYourOrchestrator);
+        }
+        if task.asset != asset {
+            return Err(VaultError::AssetMismatch);
+        }
+
+        // Each active amount must be positive; accumulate the batch total.
+        let mut batch_total: i128 = 0;
+        for a in amounts.iter() {
+            if a <= 0 {
+                return Err(VaultError::InvalidAmount);
+            }
+            batch_total = batch_total.checked_add(a).ok_or(VaultError::InvalidAmount)?;
+        }
+
+        // Step idempotency — a genuine replay of a succeeded batch step is an
+        // idempotent success and re-runs neither verification nor transfers.
+        let step_key = DataKey::TaskStepRelease(task_id, step_id);
+        if let Some(record) = env.storage().persistent().get::<_, StepRelease>(&step_key) {
+            Self::extend_persistent_ttl(&env, &step_key);
+            Self::extend_task_step_ids_ttl(&env, task_id);
+            Self::extend_task_nullifier_ids_ttl(&env, task_id);
+            if record.amount == batch_total {
+                return Ok(true);
+            }
+            return Err(VaultError::ReleaseConflict);
+        }
+
+        // Budget check before any verifier call.
+        if task.spent + batch_total > task.plan_cost {
+            return Err(VaultError::ExceedsPlanCost);
+        }
+
+        // Replay check: reject a nullifier already consumed for this task, and a
+        // nullifier repeated within this batch.
+        for (i, n) in nullifiers.iter().enumerate() {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::TaskNullifier(task_id, n.clone()))
+            {
+                return Err(VaultError::NullifierAlreadyUsed);
+            }
+            for (j, n2) in nullifiers.iter().enumerate() {
+                if i != j && n == n2 {
+                    return Err(VaultError::BatchDuplicateNullifier);
+                }
+            }
+        }
+
+        // Verifier must be configured — fail closed.
+        let verifier: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PolicyVerifier)
+            .ok_or(VaultError::PolicyVerifierNotSet)?;
+        Self::extend_instance_ttl(&env);
+
+        // Authenticated accumulator state the circuit is proven against: the prior
+        // running spend (R2) and release count (R7), and the ledger time (R6).
+        let now = env.ledger().timestamp();
+        let running_spend = task.spent as u128;
+        let prior_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TaskReleaseCount(task_id))
+            .unwrap_or(0u64);
+
+        // Reconstruct the public inputs in the circuit's EXACT order:
+        //   [commitment, nullifier[0..N], payee_field[0..N], amount[0..N],
+        //    now, running_spend, prior_count]
+        // with trailing null slots (m..N) as zero field elements.
+        let zero32: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+        let mut pis: Vec<BytesN<32>> = vec![&env, commitment.clone()];
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                nullifiers.get_unchecked(i)
+            } else {
+                zero32.clone()
+            });
+        }
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                Self::address_to_field(&env, &payees.get_unchecked(i))
+            } else {
+                zero32.clone()
+            });
+        }
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                Self::amount_to_field(&env, amounts.get_unchecked(i))
+            } else {
+                zero32.clone()
+            });
+        }
+        pis.push_back(Self::u64_to_field(&env, now));
+        pis.push_back(Self::u128_to_field(&env, running_spend));
+        pis.push_back(Self::u64_to_field(&env, prior_count));
+
+        let verified =
+            PolicyVerifierClient::new(&env, &verifier).verify_groth16_stored(&proof, &pis);
+        if !verified {
+            return Err(VaultError::PolicyProofRejected);
+        }
+
+        // ── EFFECTS (checks-effects-interactions) ───────────────────────
+        // All state that bounds fund movement is committed before any transfer.
+        Self::record_step_release(&env, task_id, step_id, batch_total)?;
+        for n in nullifiers.iter() {
+            Self::record_task_nullifier(&env, task_id, &n)?;
+        }
+        task.spent += batch_total;
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
+        let count_key = DataKey::TaskReleaseCount(task_id);
+        env.storage()
+            .persistent()
+            .set(&count_key, &(prior_count + m as u64));
+        Self::extend_persistent_ttl(&env, &count_key);
+
+        // ── INTERACTIONS: pay each active payee (amount minus protocol fee) ──
+        let token_client = token::Client::new(&env, &asset);
+        for i in 0..m {
+            let amount = amounts.get_unchecked(i);
+            let payee = payees.get_unchecked(i);
+            let fee = Self::compute_fee(&env, amount);
+            let payee_payout = amount.checked_sub(fee).expect("fee arithmetic underflow");
+            Self::accrue_protocol_fee(&env, &asset, fee, task_id);
+            token_client.transfer(&env.current_contract_address(), &payee, &payee_payout);
+            ReleaseProvedEvent {
+                user: task.user.clone(),
+                orchestrator: orchestrator.clone(),
+                task_id,
+                asset: asset.clone(),
+                amount,
+                nullifier: nullifiers.get_unchecked(i),
+            }
+            .publish(&env);
+        }
+
+        log!(
+            &env,
+            "release_payment_proved_batch task={} count={} total={} spent={}",
+            task_id,
+            m,
+            batch_total,
+            task.spent
+        );
+        Ok(true)
+    }
+
+    /// Encode a Soroban `Address` as the pp/2 payee field element: SHA-256 of the
+    /// address's ScVal XDR with the top 3 bits cleared (so the value is < 2^253 <
+    /// r). Byte-for-byte identical to `@clevercon/common`'s `payeeField`, which is
+    /// what binds a proof to the real payee.
+    fn address_to_field(env: &Env, address: &Address) -> BytesN<32> {
+        let xdr: Bytes = address.to_xdr(env);
+        let hash: BytesN<32> = env.crypto().sha256(&xdr).into();
+        let mut arr = hash.to_array();
+        arr[0] &= 0x1f;
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a stroops amount as a 32-byte big-endian scalar (16 zero bytes then
+    /// the u128), matching the circuit's `amount` input.
+    fn amount_to_field(env: &Env, amount: i128) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[16..32].copy_from_slice(&(amount as u128).to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a u64 (ledger time / count) as a 32-byte big-endian scalar.
+    fn u64_to_field(env: &Env, v: u64) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[24..32].copy_from_slice(&v.to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a u128 (running spend) as a 32-byte big-endian scalar.
+    fn u128_to_field(env: &Env, v: u128) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[16..32].copy_from_slice(&v.to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Accrue a protocol fee to the configured recipient's claimable balance for
+    /// `asset`. No-op when the fee is zero or no recipient is configured. Same
+    /// handling as the single proof-gated release.
+    fn accrue_protocol_fee(env: &Env, asset: &Address, fee: i128, task_id: u64) {
+        if fee <= 0 {
+            return;
+        }
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<_, FeeConfig>(&DataKey::FeeConfig)
+        {
+            if let Some(ref recipient) = fee_config.recipient {
+                let fee_key = DataKey::AccruedFees(asset.clone());
+                let current: i128 = env.storage().instance().get(&fee_key).unwrap_or(0i128);
+                let new_accrued = current.checked_add(fee).expect("fee accrual overflow");
+                env.storage().instance().set(&fee_key, &new_accrued);
+                FeeAccruedEvent {
+                    asset: asset.clone(),
+                    recipient: recipient.clone(),
+                    fee_amount: fee,
+                    task_id,
+                }
+                .publish(env);
+            }
+        }
     }
 
     /// Orchestrator marks task complete.

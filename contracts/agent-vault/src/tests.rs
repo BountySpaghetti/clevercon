@@ -4257,6 +4257,107 @@ fn dummy_proof(env: &Env) -> Bytes {
     Bytes::from_array(env, &[9, 8, 7, 6, 5, 4, 3, 2, 1])
 }
 
+/// A zeroed Groth16 proof — content is irrelevant to the vault; the mock
+/// verifier ignores it. The real proof is exercised in the zk-fixture CI.
+fn dummy_groth16_proof(env: &Env) -> crate::Groth16Proof {
+    crate::Groth16Proof {
+        a: BytesN::from_array(env, &[0u8; 96]),
+        b: BytesN::from_array(env, &[0u8; 192]),
+        c: BytesN::from_array(env, &[0u8; 96]),
+    }
+}
+
+#[test]
+fn test_release_payment_proved_batch_happy_path() {
+    let s = setup_policy();
+    s.client.set_policy_verifier(&s.admin, &s.verifier_id);
+    s.verifier.configure(&VerifyMode::AcceptAll);
+
+    let c = commitment_of(&s.env, 7);
+    let task_id = s
+        .client
+        .create_task_with_policy(&s.orchestrator, &s.usdc_sac, &5_000, &c);
+
+    let p1 = Address::generate(&s.env);
+    let p2 = Address::generate(&s.env);
+    let p3 = Address::generate(&s.env);
+    let payees = soroban_sdk::vec![&s.env, p1.clone(), p2.clone(), p3.clone()];
+    let amounts = soroban_sdk::vec![&s.env, 400i128, 300i128, 200i128];
+    let nullifiers = soroban_sdk::vec![
+        &s.env,
+        nullifier_of(&s.env, 20),
+        nullifier_of(&s.env, 21),
+        nullifier_of(&s.env, 22)
+    ];
+    let proof = dummy_groth16_proof(&s.env);
+
+    // One proof authorizes all three transfers.
+    let ok = s.client.release_payment_proved_batch(
+        &s.orchestrator,
+        &task_id,
+        &1,
+        &s.usdc_sac,
+        &payees,
+        &amounts,
+        &nullifiers,
+        &proof,
+    );
+    assert!(ok);
+    assert_eq!(s.token_client.balance(&p1), 400);
+    assert_eq!(s.token_client.balance(&p2), 300);
+    assert_eq!(s.token_client.balance(&p3), 200);
+    assert_eq!(s.client.get_task(&task_id).unwrap().spent, 900);
+    assert_eq!(s.verifier.calls(), 1);
+
+    // A nullifier replay within a later batch is rejected (no double spend).
+    let replay = soroban_sdk::vec![&s.env, nullifier_of(&s.env, 20)];
+    let one = soroban_sdk::vec![&s.env, 100i128];
+    let one_payee = soroban_sdk::vec![&s.env, Address::generate(&s.env)];
+    let res = s.client.try_release_payment_proved_batch(
+        &s.orchestrator,
+        &task_id,
+        &2,
+        &s.usdc_sac,
+        &one_payee,
+        &one,
+        &replay,
+        &proof,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_release_payment_proved_batch_rejects_and_moves_no_funds() {
+    let s = setup_policy();
+    s.client.set_policy_verifier(&s.admin, &s.verifier_id);
+    s.verifier.configure(&VerifyMode::RejectAll);
+
+    let c = commitment_of(&s.env, 8);
+    let task_id = s
+        .client
+        .create_task_with_policy(&s.orchestrator, &s.usdc_sac, &5_000, &c);
+    let payee = Address::generate(&s.env);
+    let payees = soroban_sdk::vec![&s.env, payee.clone()];
+    let amounts = soroban_sdk::vec![&s.env, 400i128];
+    let nullifiers = soroban_sdk::vec![&s.env, nullifier_of(&s.env, 30)];
+    let proof = dummy_groth16_proof(&s.env);
+
+    let res = s.client.try_release_payment_proved_batch(
+        &s.orchestrator,
+        &task_id,
+        &1,
+        &s.usdc_sac,
+        &payees,
+        &amounts,
+        &nullifiers,
+        &proof,
+    );
+    assert!(res.is_err());
+    // Fail-closed: no funds moved, nothing spent.
+    assert_eq!(s.token_client.balance(&payee), 0);
+    assert_eq!(s.client.get_task(&task_id).unwrap().spent, 0);
+}
+
 // ── Phase 1: policy commitment & mutual exclusion ──────────────────────
 
 #[test]
