@@ -19,6 +19,7 @@ export type {
   BatchContext,
   BatchProof,
   BatchReleaseRequest,
+  BatchReleaseMeta,
   AllowlistMembership,
 } from './payments/batch-prover.js';
 export {

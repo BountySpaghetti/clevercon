@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { VaultService } from './vault.service.js';
+import { QueueService } from '../queue/queue.service.js';
 import { ApiAuthGuard } from '../auth/api-auth.guard.js';
 import { StepUpGuard } from '../auth/step-up.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
@@ -11,11 +12,30 @@ const amountSchema = z.object({ amountUsdc: z.number().positive() });
 const submitSchema = z.object({ signedXdr: z.string().min(1) });
 const agentWalletSchema = z.object({ publicKey: z.string().min(1) });
 
+const hex = z.string().regex(/^[0-9a-fA-F]+$/);
+// A pp/2 batch release: the client proved locally and POSTs this; the API relays
+// it to the worker, which submits release_payment_proved_batch. Up to N=4 legs.
+const batchReleaseSchema = z.object({
+  vaultTaskId: z.string().nullable(),
+  planCostUsdc: z.number().positive(),
+  stepId: z.number().int().nonnegative(),
+  payees: z.array(z.string().min(1)).min(1).max(4),
+  amounts: z.array(z.string().min(1)).min(1).max(4),
+  nullifiers: z.array(hex).min(1).max(4),
+  validAfter: z.string().min(1),
+  validBefore: z.string().min(1),
+  commitment: hex,
+  proof: z.object({ a: hex, b: hex, c: hex }),
+});
+
 /** The current session's vault position and on-chain deposit/withdraw. */
 @Controller('vault')
 @UseGuards(ApiAuthGuard) // JWT (console) or x-api-key (agents); deposit/withdraw add StepUpGuard
 export class VaultController {
-  constructor(private readonly vault: VaultService) {}
+  constructor(
+    private readonly vault: VaultService,
+    private readonly queue: QueueService,
+  ) {}
 
   @Get()
   get(@CurrentUser() user: AuthUser) {
@@ -90,5 +110,34 @@ export class VaultController {
   submit(@Body() body: unknown) {
     const { signedXdr } = parseBody(submitSchema, body);
     return this.vault.submit(signedXdr);
+  }
+
+  /**
+   * pp/2 trustless batch release: the caller proved their private policy
+   * client-side (the plaintext never leaves them) and POSTs the proof + the
+   * payouts here. The API only relays, it validates the shape and enqueues the
+   * worker, which submits release_payment_proved_batch with the buyer's delegate
+   * (a relayer that cannot forge the proof). The chain verifies the proof.
+   */
+  @Post('batch-release-proved')
+  async batchReleaseProved(@CurrentUser() user: AuthUser, @Body() body: unknown) {
+    const req = parseBody(batchReleaseSchema, body);
+    if (req.payees.length !== req.amounts.length || req.payees.length !== req.nullifiers.length) {
+      throw new BadRequestException('payees, amounts, and nullifiers must be equal length');
+    }
+    const jobId = await this.queue.enqueueBatchRelease({
+      buyerId: user.userId,
+      vaultTaskId: req.vaultTaskId,
+      commitmentHex: req.commitment,
+      planCostUsdc: req.planCostUsdc,
+      stepId: req.stepId,
+      payees: req.payees,
+      amountsStroops: req.amounts,
+      nullifiers: req.nullifiers,
+      validAfter: req.validAfter,
+      validBefore: req.validBefore,
+      proof: req.proof,
+    });
+    return { jobId, status: 'queued' };
   }
 }

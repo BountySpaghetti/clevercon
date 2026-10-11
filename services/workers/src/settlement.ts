@@ -181,6 +181,7 @@ async function createTaskWithPolicyOnChain(
   kp: Keypair,
   planCostUsdc: number,
   commitmentHex: string,
+  contractId?: string,
 ): Promise<bigint> {
   const commitment = Buffer.from(commitmentHex, 'hex');
   if (commitment.length !== 32) throw new Error('policy commitment must be 32 bytes');
@@ -195,7 +196,9 @@ async function createTaskWithPolicyOnChain(
     kp,
     'create_task_with_policy',
     args,
-    sorobanOpts(),
+    // Defaults to the pp/1 vault; the pp/2 batch path passes PP2_VAULT_CONTRACT_ID
+    // so the task is locked on the SAME vault the batch release targets.
+    sorobanOpts(contractId),
   );
   return BigInt(returnValue as string | number | bigint);
 }
@@ -403,6 +406,95 @@ export async function settleStep(
 
   logger.info({ stepId, txHash, amountUsdc }, 'step settled');
   return { status: 'settled', txHash, buyerId, taskId: step.taskId };
+}
+
+/** The job payload for a pp/2 batch release (all JSON-safe; the client proved). */
+export interface BatchSettlePayload {
+  buyerId: string;
+  /** On-chain vault task id if the task is already locked; else null to lock it. */
+  vaultTaskId: string | null;
+  /** Policy commitment (hex) the proof is bound to; used to lock the task. */
+  commitmentHex: string;
+  /** Task budget to lock (USDC) if not already locked. */
+  planCostUsdc: number;
+  /** On-chain step id (the vault is idempotent by (task_id, step_id)). */
+  stepId: number;
+  payees: string[];
+  amountsStroops: string[];
+  /** Active nullifiers as hex. */
+  nullifiers: string[];
+  validAfter: string;
+  validBefore: string;
+  proof: { a: string; b: string; c: string };
+}
+
+/**
+ * Settle a pp/2 batch: the owner/agent proved client-side, this relayer submits
+ * `release_payment_proved_batch` with the buyer's delegate (it cannot forge the
+ * proof, only submit it). Lazily locks the task on-chain if needed. The vault is
+ * idempotent by (task_id, step_id) and the indexer records the release event, so
+ * no per-leg DB write is needed here. Runs inside the per-signer serialized
+ * section so it never races the delegate's sequence number.
+ */
+export async function settleBatch(
+  prisma: PrismaClient,
+  payload: BatchSettlePayload,
+): Promise<SettleResult> {
+  if (!settlementConfigured() || !process.env.PP2_VAULT_CONTRACT_ID)
+    return {
+      status: 'skipped',
+      reason: 'pp/2 settlement not configured',
+      buyerId: payload.buyerId,
+    };
+
+  const delegate = await prisma.agentDelegate.findUnique({ where: { userId: payload.buyerId } });
+  if (!delegate)
+    return { status: 'skipped', reason: 'buyer has no delegate', buyerId: payload.buyerId };
+  const delegateKp = Keypair.fromSecret(decryptSecret(delegate.secretCipher));
+
+  const proof = {
+    a: Buffer.from(payload.proof.a, 'hex'),
+    b: Buffer.from(payload.proof.b, 'hex'),
+    c: Buffer.from(payload.proof.c, 'hex'),
+  };
+
+  try {
+    const txHash = await withDelegate(delegateKp.publicKey(), async () => {
+      let vaultTaskId = payload.vaultTaskId ? BigInt(payload.vaultTaskId) : null;
+      if (vaultTaskId === null) {
+        vaultTaskId = await createTaskWithPolicyOnChain(
+          delegateKp,
+          payload.planCostUsdc,
+          payload.commitmentHex,
+          process.env.PP2_VAULT_CONTRACT_ID,
+        );
+      }
+      return releasePaymentProvedBatch(delegateKp, {
+        taskId: vaultTaskId,
+        stepId: BigInt(payload.stepId),
+        payees: payload.payees,
+        amountsStroops: payload.amountsStroops.map((a) => BigInt(a)),
+        nullifiers: payload.nullifiers.map((n) => Buffer.from(n, 'hex')),
+        validAfter: BigInt(payload.validAfter),
+        validBefore: BigInt(payload.validBefore),
+        proof,
+      });
+    });
+    logger.info(
+      { buyerId: payload.buyerId, txHash, legs: payload.payees.length },
+      'batch settled (pp/2)',
+    );
+    return { status: 'settled', txHash, buyerId: payload.buyerId };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.error({ buyerId: payload.buyerId, err: reason }, 'batch settlement failed');
+    return {
+      status: 'failed',
+      reason,
+      buyerId: payload.buyerId,
+      retryable: !isDeterministicChainError(reason),
+    };
+  }
 }
 
 // ── On-chain task finalization ────────────────────────────────────────────────

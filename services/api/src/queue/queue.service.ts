@@ -8,11 +8,27 @@ import { Redis } from 'ioredis';
 const TASK_QUEUE = 'task-execution';
 const PROOF_QUEUE = 'proof-generation';
 const SETTLEMENT_QUEUE = 'settlement';
+const BATCH_SETTLEMENT_QUEUE = 'batch-settlement';
 
 export interface ProofGenerationJob {
   proofId: string;
   payeeAddress: string;
   amountStroops: string;
+}
+
+/** Matches the worker's BatchSettlePayload (services/workers/src/settlement.ts). */
+export interface BatchSettlementJob {
+  buyerId: string;
+  vaultTaskId: string | null;
+  commitmentHex: string;
+  planCostUsdc: number;
+  stepId: number;
+  payees: string[];
+  amountsStroops: string[];
+  nullifiers: string[];
+  validAfter: string;
+  validBefore: string;
+  proof: { a: string; b: string; c: string };
 }
 
 @Injectable()
@@ -22,6 +38,7 @@ export class QueueService implements OnModuleDestroy {
   private queue: Queue | null = null;
   private proofQueue: Queue | null = null;
   private settlementQueue: Queue | null = null;
+  private batchQueue: Queue | null = null;
   private connection: Redis | null = null;
 
   private getConnection(): Redis | null {
@@ -77,6 +94,35 @@ export class QueueService implements OnModuleDestroy {
     } catch (err) {
       this.logger.error(`enqueue settlement failed for step ${stepId}: ${(err as Error).message}`);
     }
+  }
+
+  private getBatchQueue(): Queue | null {
+    const connection = this.getConnection();
+    if (!connection) return null;
+    if (!this.batchQueue) this.batchQueue = new Queue(BATCH_SETTLEMENT_QUEUE, { connection });
+    return this.batchQueue;
+  }
+
+  /**
+   * Enqueue a client-proved pp/2 batch release. The jobId is derived from the
+   * buyer + the on-chain step id so the same batch is never double-submitted
+   * (the vault is also idempotent by (task_id, step_id)).
+   */
+  async enqueueBatchRelease(job: BatchSettlementJob): Promise<string> {
+    const queue = this.getBatchQueue();
+    const jobId = `batch-${job.buyerId}-${job.stepId}`;
+    if (!queue) {
+      this.logger.warn(`REDIS_URL not set; batch ${jobId} not enqueued`);
+      throw new Error('settlement queue unavailable');
+    }
+    await queue.add('batch-settle', job, {
+      jobId,
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 3000 },
+      removeOnComplete: 200,
+      removeOnFail: 1000,
+    });
+    return jobId;
   }
 
   /**
@@ -135,6 +181,7 @@ export class QueueService implements OnModuleDestroy {
     await this.queue?.close();
     await this.proofQueue?.close();
     await this.settlementQueue?.close();
+    await this.batchQueue?.close();
     await this.connection?.quit();
   }
 }

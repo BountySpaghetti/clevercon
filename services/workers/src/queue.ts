@@ -12,6 +12,9 @@ export const PROOF_QUEUE = 'proof-generation';
 // The settlement queue: after a step is released on an on-chain-locked task, the
 // worker pays the provider via a proof-gated vault release and records it.
 export const SETTLEMENT_QUEUE = 'settlement';
+// The pp/2 batch-settlement queue: the API enqueues a client-proved batch; the
+// worker submits release_payment_proved_batch to the pp/2 vault.
+export const BATCH_SETTLEMENT_QUEUE = 'batch-settlement';
 
 export interface TaskExecutionJob {
   taskId: string;

@@ -207,10 +207,18 @@ export async function createBatchProof(
   return proveBatch(buildBatchWitness(policy, releases, ctx), artifacts);
 }
 
+/** On-chain task context the relayer needs to lazily lock + settle the batch. */
+export interface BatchReleaseMeta {
+  /** On-chain vault task id if the task is already locked; null to lock it. */
+  vaultTaskId: string | null;
+  /** Task budget (USDC) to lock if not already locked. */
+  planCostUsdc: number;
+  /** On-chain step id (the vault is idempotent by (task_id, step_id)). */
+  stepId: number;
+}
+
 /** The JSON body the API relay (and in turn the vault) consumes for a pp/2 batch. */
-export interface BatchReleaseRequest {
-  taskId: string;
-  stepId: string;
+export interface BatchReleaseRequest extends BatchReleaseMeta {
   /** Active payees (G...), in order. */
   payees: string[];
   /** Active amounts in stroops, in order. */
@@ -234,15 +242,15 @@ export function buildBatchReleaseRequest(
   proof: BatchProof,
   releases: BatchRelease[],
   ctx: BatchContext,
-  taskId: string,
-  stepId: string,
+  meta: BatchReleaseMeta,
 ): BatchReleaseRequest {
   if (releases.length !== proof.nullifiers.length) {
     throw new Error('releases and active nullifiers must match in length');
   }
   return {
-    taskId,
-    stepId,
+    vaultTaskId: meta.vaultTaskId,
+    planCostUsdc: meta.planCostUsdc,
+    stepId: meta.stepId,
     payees: releases.map((r) => r.payeeAddress),
     amounts: releases.map((r) => r.amountStroops),
     nullifiers: proof.nullifiers.map((n) => n.toString('hex')),

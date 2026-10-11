@@ -9,6 +9,7 @@ import {
   TASK_QUEUE,
   PROOF_QUEUE,
   SETTLEMENT_QUEUE,
+  BATCH_SETTLEMENT_QUEUE,
   redisConnection,
   redisUrl,
   type TaskExecutionJob,
@@ -17,7 +18,12 @@ import {
 } from './queue.js';
 import { executeTask } from './executor.js';
 import { generateProof } from './prover.js';
-import { settleStep, finalizeTaskIfComplete } from './settlement.js';
+import {
+  settleStep,
+  settleBatch,
+  finalizeTaskIfComplete,
+  type BatchSettlePayload,
+} from './settlement.js';
 import { deliverWebhooks } from './webhooks.js';
 import { logger } from './logger.js';
 
@@ -183,15 +189,40 @@ function main(): void {
     }
   });
 
+  // pp/2 batch settlement: the client proved; this relayer submits the batch.
+  const batchWorker = new Worker<BatchSettlePayload>(
+    BATCH_SETTLEMENT_QUEUE,
+    async (job) => {
+      const result = await settleBatch(prisma, job.data);
+      if (result.buyerId && result.status === 'settled') {
+        emitter
+          .to(`user:${result.buyerId}`)
+          .emit('task.updated', { batch: true, settled: true, txHash: result.txHash });
+      }
+      if (result.status === 'failed' && result.retryable) {
+        throw new Error(result.reason ?? 'batch settlement failed');
+      }
+      return result;
+    },
+    { connection: redisConnection(), concurrency: SETTLEMENT_CONCURRENCY },
+  );
+  batchWorker.on('completed', (job, result) =>
+    logger.info({ buyerId: job.data.buyerId, result }, 'batch settlement processed'),
+  );
+  batchWorker.on('failed', (job, err) =>
+    logger.error({ buyerId: job?.data.buyerId, err: err.message }, 'batch settlement job failed'),
+  );
+
   logger.info(
     { concurrency: CONCURRENCY },
-    'task-execution + proof-generation + settlement workers up',
+    'task-execution + proof-generation + settlement + batch workers up',
   );
 
   const shutdown = async () => {
     await worker.close();
     await proofWorker.close();
     await settlementWorker.close();
+    await batchWorker.close();
     await prisma.$disconnect();
     process.exit(0);
   };

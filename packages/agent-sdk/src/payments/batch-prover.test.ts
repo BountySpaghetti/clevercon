@@ -156,9 +156,14 @@ describe('buildBatchReleaseRequest', () => {
       { payeeAddress: PAYEE, amountStroops: '60', spendCounter: '0' },
       { payeeAddress: PAYEE, amountStroops: '30', spendCounter: '1' },
     ];
-    const req = buildBatchReleaseRequest(proof, releases, ctx, '1', '2');
-    expect(req.taskId).toBe('1');
-    expect(req.stepId).toBe('2');
+    const req = buildBatchReleaseRequest(proof, releases, ctx, {
+      vaultTaskId: null,
+      planCostUsdc: 10,
+      stepId: 2,
+    });
+    expect(req.vaultTaskId).toBe(null);
+    expect(req.planCostUsdc).toBe(10);
+    expect(req.stepId).toBe(2);
     expect(req.payees).toEqual([PAYEE, PAYEE]);
     expect(req.amounts).toEqual(['60', '30']);
     expect(req.nullifiers).toEqual(['bb'.repeat(32), 'cc'.repeat(32)]);
@@ -176,6 +181,12 @@ describe('buildBatchReleaseRequest', () => {
       { payeeAddress: PAYEE, amountStroops: '1', spendCounter: '0' },
       { payeeAddress: PAYEE, amountStroops: '2', spendCounter: '1' },
     ];
-    expect(() => buildBatchReleaseRequest(oneNullifier, releases, ctx, '1', '1')).toThrow();
+    expect(() =>
+      buildBatchReleaseRequest(oneNullifier, releases, ctx, {
+        vaultTaskId: null,
+        planCostUsdc: 1,
+        stepId: 1,
+      }),
+    ).toThrow();
   });
 });
