@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { amountScalar, encodePublicInputs, payeeHash, usdcToStroops } from './policy-inputs.js';
+import {
+  amountScalar,
+  encodePublicInputs,
+  feScalar,
+  payeeField,
+  payeeHash,
+  usdcToStroops,
+} from './policy-inputs.js';
 
 // The canonical fixture from docs/private-policies.md section 11.
 const PAYEE = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
@@ -57,6 +64,23 @@ describe('policy public-input encoding (docs/private-policies.md pp/1)', () => {
     const b = payeeHash(PAYEE);
     expect(a.equals(b)).toBe(true);
     expect(a.length).toBe(32);
+  });
+
+  it('payeeField (pp/2) is payeeHash with the top 3 bits cleared', () => {
+    // payeeHash starts 0x3f; masking 0x1f gives 0x1f, rest unchanged.
+    expect(payeeField(PAYEE).toString('hex')).toBe(
+      '1f8dde2a43b0e39285c73fa275da29bd739ac0a93049a60e98de0ac7f92faa2c',
+    );
+    // Always < 2^253 (top 3 bits of the first byte are zero).
+    expect(payeeField(PAYEE)[0] & 0xe0).toBe(0);
+    expect(payeeField(PAYEE).length).toBe(32);
+  });
+
+  it('feScalar encodes big-endian in 32 bytes', () => {
+    expect(feScalar(0n).toString('hex')).toBe('00'.repeat(32));
+    expect(feScalar(1n).toString('hex')).toBe('00'.repeat(31) + '01');
+    expect(feScalar(1_500_000n).toString('hex').endsWith('16e360')).toBe(true);
+    expect(() => feScalar(-1n)).toThrow();
   });
 
   it('usdcToStroops converts at 1e7', () => {

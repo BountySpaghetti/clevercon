@@ -51,8 +51,33 @@ export function payeeHash(payeeAddress: string): Buffer {
 }
 
 /**
+ * pp/2: the payee as a BLS12-381 scalar field element. The pp/1 `payeeHash`
+ * (SHA-256 of the ScVal XDR) has its top 3 bits cleared so the value is always
+ * `< 2^253 < r` (the BLS12-381 scalar modulus), making it a valid field element
+ * without a big-integer reduction. The vault computes the identical value from
+ * the on-chain `Address`, which is what binds a proof to the real payee.
+ */
+export function payeeField(payeeAddress: string): Buffer {
+  const out = Buffer.from(payeeHash(payeeAddress));
+  out[0] &= 0x1f;
+  return out;
+}
+
+/**
+ * pp/2: encode a non-negative integer (a u64 ledger time / count, or a u128
+ * running-spend) as a 32-byte big-endian scalar. Used for the `now`,
+ * `running_spend`, and `prior_count` public inputs the vault supplies.
+ */
+export function feScalar(value: bigint): Buffer {
+  if (value < 0n) throw new Error('scalar must be non-negative');
+  if (value >= 1n << 253n) throw new Error('scalar exceeds field capacity');
+  return Buffer.from(value.toString(16).padStart(64, '0'), 'hex');
+}
+
+/**
  * PI2: `0x00 × 16 ‖ amount_u128.to_be_bytes()`, a 32-byte big-endian scalar.
  * `amountStroops` MUST be a positive integer (the verifier rejects `amount ≤ 0`).
+ * In pp/2 this doubles as the `amount` field element (always `< 2^128 < r`).
  */
 export function amountScalar(amountStroops: bigint): Buffer {
   if (amountStroops <= 0n) throw new Error('amount must be positive');
