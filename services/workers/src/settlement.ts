@@ -1,4 +1,4 @@
-import { Keypair, nativeToScVal, Address, type xdr } from '@stellar/stellar-sdk';
+import { Keypair, nativeToScVal, Address, xdr } from '@stellar/stellar-sdk';
 import {
   PaymentMethod,
   PaymentStatus,
@@ -116,6 +116,57 @@ async function releasePaymentProved(
     nativeToScVal(params.proof, { type: 'bytes' }),
   ];
   const { hash } = await submitDelegateCall(kp, 'release_payment_proved', args, sorobanOpts());
+  return hash;
+}
+
+/**
+ * Sign `release_payment_proved_batch` (pp/2) with the buyer's delegate key and
+ * submit it: one Groth16 proof authorizes up to N private payouts on-chain. The
+ * proof is produced client-side by the SDK (`createBatchProof`); the delegate is
+ * a relayer here, it cannot forge the proof, only submit it. Vec and struct args
+ * are built explicitly to match the vault's `release_payment_proved_batch`
+ * signature (payees, amounts, nullifiers, validity window, Groth16Proof{a,b,c}).
+ */
+export async function releasePaymentProvedBatch(
+  kp: Keypair,
+  params: {
+    taskId: bigint;
+    stepId: bigint;
+    payees: string[];
+    amountsStroops: bigint[];
+    nullifiers: Buffer[];
+    validAfter: bigint;
+    validBefore: bigint;
+    proof: { a: Buffer; b: Buffer; c: Buffer };
+  },
+): Promise<string> {
+  const args: xdr.ScVal[] = [
+    new Address(kp.publicKey()).toScVal(),
+    nativeToScVal(params.taskId, { type: 'u64' }),
+    nativeToScVal(params.stepId, { type: 'u64' }),
+    new Address(env('USDC_SAC')).toScVal(),
+    xdr.ScVal.scvVec(params.payees.map((p) => new Address(p).toScVal())),
+    xdr.ScVal.scvVec(params.amountsStroops.map((a) => nativeToScVal(a, { type: 'i128' }))),
+    xdr.ScVal.scvVec(params.nullifiers.map((n) => nativeToScVal(n, { type: 'bytes' }))),
+    nativeToScVal(params.validAfter, { type: 'u64' }),
+    nativeToScVal(params.validBefore, { type: 'u64' }),
+    nativeToScVal(
+      { a: params.proof.a, b: params.proof.b, c: params.proof.c },
+      {
+        type: {
+          a: ['symbol', 'bytes'],
+          b: ['symbol', 'bytes'],
+          c: ['symbol', 'bytes'],
+        },
+      },
+    ),
+  ];
+  const { hash } = await submitDelegateCall(
+    kp,
+    'release_payment_proved_batch',
+    args,
+    sorobanOpts(),
+  );
   return hash;
 }
 
