@@ -1,6 +1,30 @@
 export { createAgent } from './agent.js';
 export { withX402, createPayingFetch } from './payments/x402.js';
 export { withMpp } from './payments/mpp.js';
+export {
+  buildBatchWitness,
+  proveBatch,
+  createBatchProof,
+  BATCH_N,
+  ALLOWLIST_DEPTH,
+  CATEGORY_COUNT,
+  CALENDAR_WINDOWS,
+} from './payments/batch-prover.js';
+export type {
+  PolicyWitness,
+  BatchRelease,
+  BatchContext,
+  BatchProof,
+  AllowlistMembership,
+} from './payments/batch-prover.js';
+export {
+  payeeField,
+  amountScalar,
+  feScalar,
+  proofToSoroban,
+  extractBatchOutputs,
+  type SorobanProof,
+} from './payments/policy-codec.js';
 export { createRegistryClient } from './registry.js';
 export { AgentConfigError } from './config.js';
 export { createProvider, MAX_OUTPUT_CHARS } from './provider.js';

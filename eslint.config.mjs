@@ -10,6 +10,7 @@ export default tseslint.config(
       'apps/web/**',
       'packages/mcp/test-server.mjs',
       'scripts/build-test-proof.mjs',
+      'scripts/zk/**',
       'data/**',
       'logs/**',
       '.local/**',
