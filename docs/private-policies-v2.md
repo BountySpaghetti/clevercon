@@ -294,4 +294,13 @@ only (never the production VK).
   universal-setup SNARK, is a future consideration but is not budget-feasible on
   Soroban today; BLS12-381 Groth16 is.)
 - The fully in-circuit private R2 accumulator is deferred.
+- **Per-task scope (v1).** The vault records nullifiers and the R2/R7 accumulators
+  per task (`TaskNullifier(task_id, ...)`, `running_spend = task.spent`,
+  `TaskReleaseCount(task_id)`). So the once-only (replay) guarantee and the R2
+  rolling cap / R7 velocity hold *within* a task, but reset across tasks: the same
+  proof re-executed under a new task moves funds again, and the windowed caps do
+  not span separate disburses. Per-release rules (R1, R3, R4, R5, R6, R8) are
+  enforced in-proof on every release and are unaffected. The fix is vault-only (key
+  the nullifier store and the accumulators by the policy commitment, not the task)
+  and is scheduled for the security-hardening pass.
 - These are stated so the privacy claim is not overstated.
