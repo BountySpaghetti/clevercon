@@ -40,7 +40,7 @@ function withDelegate<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return delegateMutex.runExclusive(key, () => redisLock().withLock(key, fn));
 }
 
-function sorobanOpts(contractId?: string): SorobanOpts {
+function sorobanOpts(): SorobanOpts {
   const net = resolveNetwork(process.env.NETWORK);
   const passphrase = process.env.NETWORK_PASSPHRASE || net.passphrase;
   const rpcUrl = process.env.STELLAR_RPC_URL || net.defaultSorobanRpcUrl;
@@ -53,8 +53,10 @@ function sorobanOpts(contractId?: string): SorobanOpts {
   return {
     rpcUrl,
     passphrase,
-    // Defaults to the pp/1 vault; the pp/2 batch path targets PP2_VAULT_CONTRACT_ID.
-    contractId: contractId || process.env.AGENT_VAULT_CONTRACT_ID || '',
+    // The single active vault. Every on-chain path (release, batch release, lock,
+    // finalize) targets it, so pointing AGENT_VAULT_CONTRACT_ID at a vault moves
+    // the whole app onto it.
+    contractId: process.env.AGENT_VAULT_CONTRACT_ID || '',
   };
 }
 
@@ -166,7 +168,7 @@ export async function releasePaymentProvedBatch(
     kp,
     'release_payment_proved_batch',
     args,
-    sorobanOpts(process.env.PP2_VAULT_CONTRACT_ID),
+    sorobanOpts(),
   );
   return hash;
 }
@@ -181,7 +183,6 @@ async function createTaskWithPolicyOnChain(
   kp: Keypair,
   planCostUsdc: number,
   commitmentHex: string,
-  contractId?: string,
 ): Promise<bigint> {
   const commitment = Buffer.from(commitmentHex, 'hex');
   if (commitment.length !== 32) throw new Error('policy commitment must be 32 bytes');
@@ -196,9 +197,7 @@ async function createTaskWithPolicyOnChain(
     kp,
     'create_task_with_policy',
     args,
-    // Defaults to the pp/1 vault; the pp/2 batch path passes PP2_VAULT_CONTRACT_ID
-    // so the task is locked on the SAME vault the batch release targets.
-    sorobanOpts(contractId),
+    sorobanOpts(),
   );
   return BigInt(returnValue as string | number | bigint);
 }
@@ -440,10 +439,10 @@ export async function settleBatch(
   prisma: PrismaClient,
   payload: BatchSettlePayload,
 ): Promise<SettleResult> {
-  if (!settlementConfigured() || !process.env.PP2_VAULT_CONTRACT_ID)
+  if (!settlementConfigured())
     return {
       status: 'skipped',
-      reason: 'pp/2 settlement not configured',
+      reason: 'settlement not configured',
       buyerId: payload.buyerId,
     };
 
@@ -466,7 +465,6 @@ export async function settleBatch(
           delegateKp,
           payload.planCostUsdc,
           payload.commitmentHex,
-          process.env.PP2_VAULT_CONTRACT_ID,
         );
       }
       return releasePaymentProvedBatch(delegateKp, {

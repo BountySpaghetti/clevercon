@@ -7,8 +7,8 @@
 [![CI](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml/badge.svg)](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Network](https://img.shields.io/badge/Network-Stellar%20Testnet-7B2FFF)](https://stellar.expert/explorer/testnet)
-[![CleverVault](https://img.shields.io/badge/CleverVault-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CD3RTRZQE6ZU3FPU5GTMIS3II3C22OP22RTCAZ6AE3T3BI7XMTOKEMLA)
-[![PolicyVerifier](https://img.shields.io/badge/PolicyVerifier-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CBILHCY4FEYU7RMWBHJX42QJ5TILHZ33HNOD7A6FXTXKB7X57N4LZQ2D)
+[![CleverVault](https://img.shields.io/badge/CleverVault-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CCLUFH2E5UMJCNB4ZEH3ZP6LGER54J6GSG3YY55T4CIMPSZROU2NU44V)
+[![PolicyVerifier](https://img.shields.io/badge/PolicyVerifier-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CAZ2VC6PYIVQ5XLCZ3BP3SPHFTUKFNSQZVAWHS3N5BDLWDOAUK5VHNRP)
 
 [Architecture](docs/architecture.md) · [Private policies spec](docs/private-policies.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
@@ -201,8 +201,8 @@ Point any MCP client at `@clevercon/mcp` with `CLEVERCON_API_URL` and a scoped `
 
 | Component | Address |
 |---|---|
-| CleverVault | [`CD3RTRZQ...TOKEMLA`](https://stellar.expert/explorer/testnet/contract/CD3RTRZQE6ZU3FPU5GTMIS3II3C22OP22RTCAZ6AE3T3BI7XMTOKEMLA) |
-| PolicyVerifier | [`CBILHCY4...N4LZQ2D`](https://stellar.expert/explorer/testnet/contract/CBILHCY4FEYU7RMWBHJX42QJ5TILHZ33HNOD7A6FXTXKB7X57N4LZQ2D) |
+| CleverVault | [`CCLUFH2E...NU44V`](https://stellar.expert/explorer/testnet/contract/CCLUFH2E5UMJCNB4ZEH3ZP6LGER54J6GSG3YY55T4CIMPSZROU2NU44V) |
+| PolicyVerifier | [`CAZ2VC6P...HNRP`](https://stellar.expert/explorer/testnet/contract/CAZ2VC6PYIVQ5XLCZ3BP3SPHFTUKFNSQZVAWHS3N5BDLWDOAUK5VHNRP) |
 | Registry | [`CAN2A7GA...AQ4H6RM`](https://stellar.expert/explorer/testnet/contract/CAN2A7GA2PNL4BYEBN3DZM3G74CNMJ2WAB2WTEMO4L6MIY5F2AQ4H6RM) |
 | USDC (Circle testnet SAC) | [`CBIELTK6...HMXQDAMA`](https://stellar.expert/explorer/testnet/contract/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA) |
 
