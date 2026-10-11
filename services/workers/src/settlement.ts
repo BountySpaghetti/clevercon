@@ -40,7 +40,7 @@ function withDelegate<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return delegateMutex.runExclusive(key, () => redisLock().withLock(key, fn));
 }
 
-function sorobanOpts(): SorobanOpts {
+function sorobanOpts(contractId?: string): SorobanOpts {
   const net = resolveNetwork(process.env.NETWORK);
   const passphrase = process.env.NETWORK_PASSPHRASE || net.passphrase;
   const rpcUrl = process.env.STELLAR_RPC_URL || net.defaultSorobanRpcUrl;
@@ -53,7 +53,8 @@ function sorobanOpts(): SorobanOpts {
   return {
     rpcUrl,
     passphrase,
-    contractId: process.env.AGENT_VAULT_CONTRACT_ID ?? '',
+    // Defaults to the pp/1 vault; the pp/2 batch path targets PP2_VAULT_CONTRACT_ID.
+    contractId: contractId || process.env.AGENT_VAULT_CONTRACT_ID || '',
   };
 }
 
@@ -165,7 +166,7 @@ export async function releasePaymentProvedBatch(
     kp,
     'release_payment_proved_batch',
     args,
-    sorobanOpts(),
+    sorobanOpts(process.env.PP2_VAULT_CONTRACT_ID),
   );
   return hash;
 }
