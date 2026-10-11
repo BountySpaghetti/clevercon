@@ -43,12 +43,20 @@ async function main() {
   const wc2 = await loadOracle('poseidon2');
   const wc3 = await loadOracle('poseidon3');
   const wc4 = await loadOracle('poseidon4');
-  const P2 = async (a, b) => BigInt((await wc2.calculateWitness({ a: a.toString(), b: b.toString() }, 0))[1]);
+  const P2 = async (a, b) =>
+    BigInt((await wc2.calculateWitness({ a: a.toString(), b: b.toString() }, 0))[1]);
   const P3 = async (a, b, c) =>
-    BigInt((await wc3.calculateWitness({ a: a.toString(), b: b.toString(), c: c.toString() }, 0))[1]);
+    BigInt(
+      (await wc3.calculateWitness({ a: a.toString(), b: b.toString(), c: c.toString() }, 0))[1],
+    );
   const P4 = async (a, b, c, d) =>
     BigInt(
-      (await wc4.calculateWitness({ a: a.toString(), b: b.toString(), c: c.toString(), d: d.toString() }, 0))[1],
+      (
+        await wc4.calculateWitness(
+          { a: a.toString(), b: b.toString(), c: c.toString(), d: d.toString() },
+          0,
+        )
+      )[1],
     );
 
   // One real membership path (all-zero co-path), reused for every active release.

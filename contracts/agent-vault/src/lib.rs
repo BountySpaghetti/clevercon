@@ -57,11 +57,8 @@ pub trait PolicyVerifier {
     /// stored VK. The vault assembles `public_inputs` in the circuit's exact
     /// order and only moves funds on `true`. Mirrors
     /// `PolicyVerifier::verify_groth16_stored`.
-    fn verify_groth16_stored(
-        env: Env,
-        proof: Groth16Proof,
-        public_inputs: Vec<BytesN<32>>,
-    ) -> bool;
+    fn verify_groth16_stored(env: Env, proof: Groth16Proof, public_inputs: Vec<BytesN<32>>)
+        -> bool;
 }
 
 /// A Groth16 proof over BLS12-381 (uncompressed points), structurally identical
@@ -1489,7 +1486,9 @@ impl AgentVault {
             if a <= 0 {
                 return Err(VaultError::InvalidAmount);
             }
-            batch_total = batch_total.checked_add(a).ok_or(VaultError::InvalidAmount)?;
+            batch_total = batch_total
+                .checked_add(a)
+                .ok_or(VaultError::InvalidAmount)?;
         }
 
         // Step idempotency — a genuine replay of a succeeded batch step is an
