@@ -16,7 +16,10 @@ export {
   extractBatchOutputs,
   type SorobanProof,
 } from './payments/policy-codec.js';
-export { DEFAULT_ARTIFACT_BASE_URL } from './payments/artifacts-base.js';
+export {
+  DEFAULT_ARTIFACT_BASE_URL,
+  DEFAULT_POSEIDON_ARTIFACTS,
+} from './payments/artifacts-base.js';
 export { buildAllowlist, windowsRoot } from './payments/allowlist.js';
 export type { AllowlistEntry, Allowlist } from './payments/allowlist.js';
 export { makePoseidon } from './payments/poseidon.js';

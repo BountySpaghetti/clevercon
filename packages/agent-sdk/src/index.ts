@@ -36,6 +36,7 @@ export { resolveArtifacts, DEFAULT_ARTIFACT_BASE_URL } from './payments/artifact
 export type { ArtifactSource } from './payments/artifacts.js';
 export { makePoseidon } from './payments/poseidon.js';
 export type { Poseidon, PoseidonArtifacts } from './payments/poseidon.js';
+export { DEFAULT_POSEIDON_ARTIFACTS } from './payments/artifacts-base.js';
 export { buildAllowlist, windowsRoot } from './payments/allowlist.js';
 export type { AllowlistEntry, Allowlist } from './payments/allowlist.js';
 export { createRegistryClient } from './registry.js';
