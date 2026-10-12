@@ -10,14 +10,18 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { getActivity, type ActivityItem, type ActivityKind } from '../../lib/activity';
-import { Card, CardHeader, EmptyState } from '../../components/ui';
+import { Card, CardHeader, EmptyState, Pill } from '../../components/ui';
 
-const KIND_META: Record<ActivityKind, { icon: typeof Plus; tint: string; label: string }> = {
-  task_created: { icon: Plus, tint: 'text-sky-300', label: 'Created' },
-  task_completed: { icon: CheckCircle2, tint: 'text-emerald-300', label: 'Completed' },
-  task_failed: { icon: XCircle, tint: 'text-red-400', label: 'Failed' },
-  task_cancelled: { icon: Ban, tint: 'text-slate-400', label: 'Cancelled' },
-  payment: { icon: Coins, tint: 'text-violet-300', label: 'Payment' },
+type PillTone = 'good' | 'violet' | 'warn' | 'slate';
+const KIND_META: Record<
+  ActivityKind,
+  { icon: typeof Plus; tint: string; label: string; tone: PillTone }
+> = {
+  task_created: { icon: Plus, tint: 'text-sky-300', label: 'Created', tone: 'slate' },
+  task_completed: { icon: CheckCircle2, tint: 'text-emerald-300', label: 'Settled', tone: 'good' },
+  task_failed: { icon: XCircle, tint: 'text-red-400', label: 'Failed', tone: 'warn' },
+  task_cancelled: { icon: Ban, tint: 'text-slate-400', label: 'Cancelled', tone: 'slate' },
+  payment: { icon: Coins, tint: 'text-violet-300', label: 'Payment', tone: 'violet' },
 };
 
 /** Human-friendly relative time (e.g. "3m ago", "2h ago", "5d ago"). */
@@ -35,23 +39,20 @@ function Row({ item }: { item: ActivityItem }) {
   const meta = KIND_META[item.kind];
   const Icon = meta.icon;
   const inner = (
-    <div className="flex items-start gap-3 rounded-xl bg-white/[0.04] p-4 transition-colors hover:bg-white/[0.06]">
-      <div className={`mt-0.5 ${meta.tint}`}>
+    <div className="flex items-center gap-3 rounded-xl bg-white/[0.04] p-4 transition-colors hover:bg-white/[0.06]">
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.05] ${meta.tint}`}
+      >
         <Icon size={16} />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-3">
-          <span className="truncate text-sm text-slate-200">{item.title}</span>
+          <span className="truncate text-sm font-medium text-slate-100">{item.title}</span>
           <span className="shrink-0 text-xs text-slate-500">{timeAgo(item.at)}</span>
         </div>
-        {item.detail && <p className="mt-0.5 truncate text-xs text-slate-500">{item.detail}</p>}
-        <div className="mt-1 flex items-center gap-3 text-xs text-slate-500">
-          {item.amount != null && (
-            <span className="text-slate-300">
-              ${item.amount.toFixed(2)} {item.asset ?? ''}
-            </span>
-          )}
-          {item.status && <span>{item.status}</span>}
+        <div className="mt-1 flex items-center gap-2.5 text-xs text-slate-500">
+          <Pill tone={meta.tone}>{item.status ?? meta.label}</Pill>
+          {item.detail && <span className="truncate">{item.detail}</span>}
           {item.txHash && (
             <a
               href={`https://stellar.expert/explorer/testnet/tx/${item.txHash}`}
@@ -60,11 +61,16 @@ function Row({ item }: { item: ActivityItem }) {
               className="inline-flex items-center gap-1 text-slate-400 hover:text-white"
               onClick={(e) => e.stopPropagation()}
             >
-              tx <ExternalLink size={11} />
+              receipt <ExternalLink size={11} />
             </a>
           )}
         </div>
       </div>
+      {item.amount != null && (
+        <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-slate-200">
+          ${item.amount.toFixed(2)}
+        </span>
+      )}
     </div>
   );
   return item.taskId ? (

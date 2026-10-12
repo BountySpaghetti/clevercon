@@ -44,6 +44,18 @@ function NetworkBadge({ className = '' }: { className?: string }) {
   );
 }
 
+/** A permanent reassurance: funds are self-custodied, the platform never holds them. */
+function NonCustodialBadge({ className = '' }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/[0.06] px-2.5 py-1 text-[11px] text-emerald-300 ${className}`}
+      title="Your funds stay in your own vault. CleverCon never takes custody."
+    >
+      <ShieldCheck size={12} /> Non-custodial
+    </span>
+  );
+}
+
 // `selfServe` links are shown to any signed-in user (the console itself is the
 // place you acquire the role); the rest appear only once the role is held.
 const NAV: { to: string; label: string; role: Role; icon: Icon; selfServe?: boolean }[] = [
@@ -187,7 +199,10 @@ export function Shell({ children }: { children: ReactNode }) {
             </>
           ) : (
             <>
-              <NetworkBadge />
+              <div className="flex flex-wrap gap-2">
+                <NetworkBadge />
+                <NonCustodialBadge />
+              </div>
               <WalletButton full />
             </>
           )}

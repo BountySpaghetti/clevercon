@@ -83,9 +83,9 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-2xl bg-surface shadow-card ${
+      className={`rounded-2xl border border-line bg-surface shadow-card ${
         interactive
-          ? 'cursor-pointer transition duration-200 hover:bg-surface-2 hover:shadow-pop motion-safe:hover:-translate-y-0.5'
+          ? 'cursor-pointer transition duration-200 hover:border-line-strong hover:bg-surface-2 hover:shadow-pop motion-safe:hover:-translate-y-0.5'
           : ''
       } ${className}`}
     >
@@ -197,5 +197,52 @@ export function Badge({ children, className = '' }: { children: ReactNode; class
     >
       {children}
     </span>
+  );
+}
+
+// ── State + data primitives (the money-app vocabulary) ──────────────────────
+
+const PILL_TONES: Record<string, string> = {
+  good: 'bg-emerald-500/[0.12] text-emerald-300',
+  violet: 'bg-violet-500/[0.12] text-violet-300',
+  warn: 'bg-amber-500/[0.12] text-amber-300',
+  slate: 'bg-white/[0.06] text-slate-300',
+};
+
+/**
+ * A status pill with a leading dot. Encodes state in form as well as words so it
+ * reads at a glance in a ledger (settled / proving / confirmed / failed).
+ */
+export function Pill({
+  tone = 'slate',
+  children,
+}: {
+  tone?: keyof typeof PILL_TONES;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold ${PILL_TONES[tone] ?? PILL_TONES.slate}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * A two-segment vault meter: locked budget (violet) beside available (emerald),
+ * so the split between committed and spendable reads instantly.
+ */
+export function Meter({ lockedPct }: { lockedPct: number }) {
+  const locked = Math.max(0, Math.min(100, Number.isFinite(lockedPct) ? lockedPct : 0));
+  return (
+    <div className="flex h-2.5 overflow-hidden rounded-full bg-white/[0.06]">
+      <span
+        className="h-full bg-gradient-to-r from-violet-600 to-violet-400"
+        style={{ width: `${locked}%` }}
+      />
+      <span className="h-full bg-emerald-400/80" style={{ width: `${100 - locked}%` }} />
+    </div>
   );
 }

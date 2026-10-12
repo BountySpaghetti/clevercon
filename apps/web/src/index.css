@@ -7,11 +7,11 @@
   /* Semantic surface + line tokens. One place to retune the whole app's depth.
      Cards read as filled panels (surface fill carries the separation), so the
      border is only a whisper rather than a visible grey outline. */
-  --cc-bg: #090a10;
-  --cc-surface: rgba(255, 255, 255, 0.035);
-  --cc-surface-2: rgba(255, 255, 255, 0.06);
-  --cc-line: rgba(255, 255, 255, 0.035);
-  --cc-line-strong: rgba(255, 255, 255, 0.08);
+  --cc-bg: #0a0b12;
+  --cc-surface: rgba(255, 255, 255, 0.028);
+  --cc-surface-2: rgba(255, 255, 255, 0.055);
+  --cc-line: rgba(255, 255, 255, 0.08);
+  --cc-line-strong: rgba(255, 255, 255, 0.13);
 }
 body {
   margin: 0;

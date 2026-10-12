@@ -345,6 +345,32 @@ export function VaultCard() {
         <p className="mt-2 text-[11px] text-slate-500">
           Balance held in the vault. Available = balance minus what active jobs have locked.
         </p>
+        {!isLoading && (vault?.balance ?? 0) > 0 && (
+          <div className="mt-4">
+            <div className="flex h-2.5 overflow-hidden rounded-full bg-white/[0.06]">
+              <span
+                className="h-full bg-gradient-to-r from-violet-600 to-violet-400"
+                style={{
+                  width: `${Math.min(100, ((vault?.locked ?? 0) / (vault?.balance || 1)) * 100)}%`,
+                }}
+              />
+              <span
+                className="h-full bg-emerald-400/80"
+                style={{
+                  width: `${100 - Math.min(100, ((vault?.locked ?? 0) / (vault?.balance || 1)) * 100)}%`,
+                }}
+              />
+            </div>
+            <div className="mt-2.5 flex gap-4 text-[11px] text-slate-400">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Available to spend
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-sm bg-violet-500" /> Locked in jobs
+              </span>
+            </div>
+          </div>
+        )}
 
         {enabled ? (
           <div className="mt-4">

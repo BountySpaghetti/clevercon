@@ -94,7 +94,7 @@ const PILLARS = [
     border: 'border-violet-800/40',
     tag: 'Private',
     title: 'Rules only you can see',
-    body: 'Your limits are committed and checked on-chain without being published. Your budget and approved payees stay yours, a binding proof today, with trustless zero-knowledge verification on the roadmap. Transparent enforcers and escrows cannot do this.',
+    body: 'Your limits are committed and checked on-chain without being published. Your budget and approved payees stay yours, now enforced by a real zero-knowledge proof verified on-chain (live on testnet), not a trusted server. Transparent enforcers and escrows cannot do this.',
   },
   {
     icon: Boxes,
