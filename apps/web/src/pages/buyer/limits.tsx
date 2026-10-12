@@ -104,6 +104,39 @@ export function LimitsBuilder({ value, onChange }: { value: Draft; onChange: (d:
         </label>
       </div>
 
+      <label className="block">
+        <span className="mb-1 flex items-center gap-1.5 text-xs text-slate-400">
+          <Gauge size={13} className="text-violet-300" /> Max number of payments
+        </span>
+        <div className="flex gap-2">
+          <input
+            value={value.velocityCount}
+            onChange={(e) => set({ velocityCount: e.target.value.replace(/[^0-9]/g, '') })}
+            inputMode="numeric"
+            placeholder="e.g. 5 (blank = no count limit)"
+            className={inputCls}
+          />
+          <select
+            value={value.velocityWindow}
+            onChange={(e) => set({ velocityWindow: e.target.value as keyof typeof WINDOWS })}
+            className="w-40 rounded-lg bg-black/30 px-2 py-2 text-sm text-slate-100 outline-none"
+            aria-label="Velocity window"
+          >
+            {Object.entries(WINDOWS)
+              .filter(([k]) => k !== 'none')
+              .map(([k, w]) => (
+                <option key={k} value={k}>
+                  {w.label}
+                </option>
+              ))}
+          </select>
+        </div>
+        <span className="mt-1 block text-[11px] text-slate-600">
+          Caps how often a payment can go out (for example, at most 5 per week), proven on-chain
+          alongside the amount caps.
+        </span>
+      </label>
+
       <div>
         <span className="mb-1 flex items-center gap-1.5 text-xs text-slate-400">
           <Users size={13} className="text-violet-300" /> Approved payees (allowlist)
@@ -201,19 +234,25 @@ export function LimitsManager() {
       return createPolicy(rules, isPrivate);
     },
     onSuccess: (p) => {
-      if (draft.isPrivate) {
-        try {
-          localStorage.setItem(localKey(p.commitment), JSON.stringify(draft));
-        } catch {
-          // ignore
-        }
+      // Cache the plaintext draft on this device for every limit: private limits
+      // need it (the server keeps only a commitment), and even transparent ones
+      // carry device-local rules (velocity today, per-payee caps next) the server
+      // shape does not. It never leaves the browser.
+      try {
+        localStorage.setItem(localKey(p.commitment), JSON.stringify(draft));
+      } catch {
+        // ignore
       }
       setDraft(emptyDraft());
       qc.invalidateQueries({ queryKey: ['policies'] });
     },
   });
 
-  const hasAnyRule = !!draft.perPaymentCeiling || !!draft.rollingCap || draft.allowlist.length > 0;
+  const hasAnyRule =
+    !!draft.perPaymentCeiling ||
+    !!draft.rollingCap ||
+    !!draft.velocityCount ||
+    draft.allowlist.length > 0;
 
   return (
     <Card className="p-0">

@@ -17,6 +17,10 @@ export type Draft = {
   rollingCap: string;
   rollingWindow: keyof typeof WINDOWS;
   allowlist: string[];
+  // R7 velocity: at most this many payments per velocity window. Kept on the
+  // device only (like the rest of the private rule), proven alongside the caps.
+  velocityCount: string;
+  velocityWindow: keyof typeof WINDOWS;
 };
 
 export const emptyDraft = (): Draft => ({
@@ -25,6 +29,8 @@ export const emptyDraft = (): Draft => ({
   rollingCap: '',
   rollingWindow: 'week',
   allowlist: [],
+  velocityCount: '',
+  velocityWindow: 'week',
 });
 
 // Application presets: the real jobs people use CleverCon for. Each is a ready
@@ -43,6 +49,8 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '5000',
       rollingWindow: 'month',
       allowlist: [],
+      velocityCount: '',
+      velocityWindow: 'week',
     }),
   },
   {
@@ -56,6 +64,8 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '20000',
       rollingWindow: 'month',
       allowlist: [],
+      velocityCount: '',
+      velocityWindow: 'week',
     }),
   },
   {
@@ -68,6 +78,8 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '',
       rollingWindow: 'month',
       allowlist: [],
+      velocityCount: '',
+      velocityWindow: 'week',
     }),
   },
   {
@@ -81,6 +93,8 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '200',
       rollingWindow: 'week',
       allowlist: [],
+      velocityCount: '',
+      velocityWindow: 'week',
     }),
   },
 ];
@@ -104,6 +118,8 @@ export function describeDraft(d: Draft): string {
   const parts: string[] = [];
   if (d.perPaymentCeiling) parts.push(`max $${d.perPaymentCeiling}/payment`);
   if (d.rollingCap) parts.push(`max $${d.rollingCap} ${WINDOWS[d.rollingWindow].label}`);
+  if (d.velocityCount)
+    parts.push(`max ${d.velocityCount} payment(s) ${WINDOWS[d.velocityWindow].label}`);
   parts.push(
     d.allowlist.length ? `only ${d.allowlist.length} allowed payee(s)` : 'any payee within caps',
   );
@@ -164,35 +180,59 @@ export function setDefaultLimitId(id: string): void {
 }
 
 /**
- * The plaintext rules behind a saved limit: the server-held rule for transparent
- * limits, else this device's local copy for private ones (the server keeps only a
- * commitment). Returns null when neither is available (a private limit created on
- * another device).
+ * Map a device-local {@link Draft} onto the SDK prover's {@link PolicyBundleRules}.
+ * This is the lossless bridge (it carries velocity and, in future, per-payee caps
+ * and calendar windows that the server-side rule shape does not), so Disburse
+ * proves exactly what the owner built.
  */
-export function savedLimitRules(p: { rules?: PolicyRules | null; commitment: string }): PolicyRules | null {
-  if (p.rules) return p.rules;
-  try {
-    const cached = localStorage.getItem(LIMIT_CACHE_PREFIX + p.commitment);
-    if (cached) return draftToRules(JSON.parse(cached) as Draft).rules;
-  } catch {
-    // ignore
-  }
-  return null;
+export function draftToBundleRules(d: Draft): PolicyBundleRules {
+  const rollSecs = WINDOWS[d.rollingWindow].secs;
+  const velSecs = WINDOWS[d.velocityWindow].secs;
+  // R2 and R7 each need both their cap/count AND a real window, or neither.
+  const rollOn = !!(d.rollingCap && rollSecs);
+  const velOn = !!(d.velocityCount && velSecs);
+  return {
+    perPaymentCeilingUsdc: d.perPaymentCeiling ? Number(d.perPaymentCeiling) : 0,
+    rollingCapUsdc: rollOn ? Number(d.rollingCap) : undefined,
+    rollingWindowSecs: rollOn ? rollSecs : undefined,
+    allowlist: d.allowlist.length ? d.allowlist.map((a) => ({ payeeAddress: a })) : undefined,
+    maxReleasesPerWindow: velOn ? Number(d.velocityCount) : undefined,
+    velocityWindowSecs: velOn ? velSecs : undefined,
+  };
 }
 
 /**
- * Map the web saved-limit rule shape onto the SDK prover's {@link PolicyBundleRules}
- * so Disburse can prove the whole limit (ceiling, rolling cap, allowlist, deny-list)
- * in the browser. The per-payment ceiling is passed in because Disburse keeps it as
- * its own editable field (the rest ride the saved limit).
+ * Map the server-side saved-limit rule shape onto {@link PolicyBundleRules}. Used
+ * for transparent limits (and private limits created on another device) where only
+ * the server rule is available; it covers the ceiling, rolling cap, allowlist, and
+ * deny-list. The ceiling may be 0 here; Disburse supplies its own editable ceiling.
  */
-export function rulesToBundleRules(r: PolicyRules, perPaymentCeilingUsdc: number): PolicyBundleRules {
+export function rulesToBundleRules(r: PolicyRules): PolicyBundleRules {
   return {
-    perPaymentCeilingUsdc,
+    perPaymentCeilingUsdc: r.perPaymentCeilingUsdc ?? 0,
     rollingCapUsdc: r.rollingCapUsdc,
     rollingWindowSecs: r.rollingWindowSecs,
     allowlist: r.allowlist?.length ? r.allowlist.map((a) => ({ payeeAddress: a })) : undefined,
     denylist: r.denylist?.length ? r.denylist : undefined,
     denylistThresholdUsdc: r.denylistThresholdUsdc,
   };
+}
+
+/**
+ * The full prover rules behind a saved limit: this device's local {@link Draft}
+ * when present (lossless), else the server rule. Returns null when neither exists
+ * (a private limit created on another device). The caller supplies the ceiling.
+ */
+export function savedLimitBundleRules(p: {
+  rules?: PolicyRules | null;
+  commitment: string;
+}): PolicyBundleRules | null {
+  try {
+    const cached = localStorage.getItem(LIMIT_CACHE_PREFIX + p.commitment);
+    if (cached) return draftToBundleRules(JSON.parse(cached) as Draft);
+  } catch {
+    // ignore
+  }
+  if (p.rules) return rulesToBundleRules(p.rules);
+  return null;
 }

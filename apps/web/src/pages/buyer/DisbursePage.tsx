@@ -12,8 +12,8 @@ import {
   Layers,
 } from 'lucide-react';
 import { apiPost } from '../../lib/api';
-import { getPolicies, type PolicyRules } from '../../lib/policies';
-import { describeSavedLimit, savedLimitRules, rulesToBundleRules } from './limits-model';
+import { getPolicies } from '../../lib/policies';
+import { describeSavedLimit, savedLimitBundleRules } from './limits-model';
 import {
   createBatchProof,
   policyWitnessFromBundle,
@@ -48,9 +48,9 @@ type Phase = 'idle' | 'proving' | 'relaying' | 'done';
  */
 export function DisbursePage() {
   const [ceiling, setCeiling] = useState('10');
-  // The picked saved limit's rules (allowlist / rolling cap / deny-list) minus the
-  // ceiling, which stays its own editable field. Proven alongside the ceiling.
-  const [savedRules, setSavedRules] = useState<PolicyRules | null>(null);
+  // The picked saved limit's full prover rules (allowlist, rolling cap, velocity,
+  // deny-list). The ceiling stays its own editable field and overrides the bundle's.
+  const [savedBundle, setSavedBundle] = useState<PolicyBundleRules | null>(null);
   const [lines, setLines] = useState<Line[]>([{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
@@ -71,8 +71,8 @@ export function DisbursePage() {
   // If the picked limit carries an allowlist (R3), every recipient must be on it:
   // the proof cannot authorise a payee outside the committed set. Flag any early so
   // the owner sees it before proving rather than as a proof failure.
-  const allowSet = savedRules?.allowlist?.length
-    ? new Set(savedRules.allowlist.map((a) => a.trim()))
+  const allowSet = savedBundle?.allowlist?.length
+    ? new Set(savedBundle.allowlist.map((e) => e.payeeAddress.trim()))
     : null;
   const offAllowlist = allowSet ? active.filter((l) => !allowSet.has(l.payee.trim())) : [];
   const canSubmit = Number(ceiling) > 0 && active.length > 0 && offAllowlist.length === 0;
@@ -85,8 +85,8 @@ export function DisbursePage() {
       // The rules proven on-chain: the ceiling (always) plus whatever the picked
       // saved limit carries (allowlist, rolling cap, deny-list). A bare ceiling is
       // field-only; an allowlist pulls in the Poseidon oracle for the Merkle root.
-      const bundleRules: PolicyBundleRules = savedRules
-        ? rulesToBundleRules(savedRules, Number(ceiling))
+      const bundleRules: PolicyBundleRules = savedBundle
+        ? { ...savedBundle, perPaymentCeilingUsdc: Number(ceiling) }
         : { perPaymentCeilingUsdc: Number(ceiling) };
       const needsFull = !!(
         bundleRules.allowlist?.length ||
@@ -239,16 +239,16 @@ export function DisbursePage() {
                   defaultValue=""
                   onChange={(e) => {
                     const p = policies.find((x) => x.id === e.target.value);
-                    const r = p ? savedLimitRules(p) : null;
-                    setSavedRules(r);
-                    if (r?.perPaymentCeilingUsdc) setCeiling(String(r.perPaymentCeilingUsdc));
+                    const b = p ? savedLimitBundleRules(p) : null;
+                    setSavedBundle(b);
+                    if (b?.perPaymentCeilingUsdc) setCeiling(String(b.perPaymentCeilingUsdc));
                   }}
                   className="cc-input mt-1.5 text-sm"
                   aria-label="Start from a saved limit"
                 >
                   <option value="">No saved limit · ceiling only…</option>
                   {policies.map((p) => {
-                    const readable = !!savedLimitRules(p);
+                    const readable = !!savedLimitBundleRules(p);
                     return (
                       <option key={p.id} value={p.id} disabled={!readable}>
                         {describeSavedLimit(p)}
@@ -344,14 +344,19 @@ export function DisbursePage() {
               )}
             </div>
 
-            {savedRules && (
+            {savedBundle && (
               <div className="flex flex-wrap gap-1.5">
                 <span className="cc-pill">Ceiling</span>
-                {savedRules.allowlist?.length ? (
-                  <span className="cc-pill">Allowlist · {savedRules.allowlist.length}</span>
+                {savedBundle.allowlist?.length ? (
+                  <span className="cc-pill">Allowlist · {savedBundle.allowlist.length}</span>
                 ) : null}
-                {savedRules.rollingCapUsdc != null ? <span className="cc-pill">Rolling cap</span> : null}
-                {savedRules.denylist?.length ? <span className="cc-pill">Deny-list</span> : null}
+                {savedBundle.rollingCapUsdc != null ? (
+                  <span className="cc-pill">Rolling cap</span>
+                ) : null}
+                {savedBundle.maxReleasesPerWindow != null ? (
+                  <span className="cc-pill">Velocity</span>
+                ) : null}
+                {savedBundle.denylist?.length ? <span className="cc-pill">Deny-list</span> : null}
                 <span className="ml-1 self-center text-[11px] text-slate-500">
                   proven on-chain in this disbursement
                 </span>
