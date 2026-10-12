@@ -19,6 +19,7 @@ const BuyerLayout = lazyFrom(() => import('./pages/buyer/BuyerLayout'), 'BuyerLa
 const Home = lazyFrom(() => import('./pages/buyer/home'), 'Home');
 const LimitsPage = lazyFrom(() => import('./pages/buyer/LimitsPage'), 'LimitsPage');
 const VaultPage = lazyFrom(() => import('./pages/buyer/VaultPage'), 'VaultPage');
+const DisbursePage = lazyFrom(() => import('./pages/buyer/DisbursePage'), 'DisbursePage');
 const ServicesPage = lazyFrom(() => import('./pages/buyer/ServicesPage'), 'ServicesPage');
 const ActivityPage = lazyFrom(() => import('./pages/buyer/ActivityPage'), 'ActivityPage');
 const TaskDetail = lazyFrom(() => import('./pages/TaskDetail'), 'TaskDetail');
@@ -54,6 +55,7 @@ export function App() {
                 <Route path="limits" element={<LimitsPage />} />
                 <Route path="services" element={<ServicesPage />} />
                 <Route path="vault" element={<VaultPage />} />
+                <Route path="disburse" element={<DisbursePage />} />
                 <Route path="activity" element={<ActivityPage />} />
                 <Route path="tasks/:id" element={<TaskDetail />} />
                 <Route path="marketplace/:id" element={<ServiceDetail />} />

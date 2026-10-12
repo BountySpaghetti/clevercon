@@ -32,7 +32,7 @@ export {
 } from './payments/policy-codec.js';
 export { newSalt, policyWitnessFromBundle } from './payments/policy-bundle.js';
 export type { PolicyBundle, PolicyBundleRules } from './payments/policy-bundle.js';
-export { resolveArtifacts } from './payments/artifacts.js';
+export { resolveArtifacts, DEFAULT_ARTIFACT_BASE_URL } from './payments/artifacts.js';
 export type { ArtifactSource } from './payments/artifacts.js';
 export { createRegistryClient } from './registry.js';
 export { AgentConfigError } from './config.js';

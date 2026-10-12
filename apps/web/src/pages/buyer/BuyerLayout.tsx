@@ -1,5 +1,12 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { MessagesSquare, Vault, Search, Activity, SlidersHorizontal } from 'lucide-react';
+import {
+  MessagesSquare,
+  Vault,
+  Search,
+  Activity,
+  SlidersHorizontal,
+  ShieldCheck,
+} from 'lucide-react';
 import { useRealtime } from '../../lib/useRealtime';
 import { PageHeader } from '../../components/ui';
 
@@ -10,6 +17,7 @@ const TABS = [
   { to: '/app', label: 'Home', icon: MessagesSquare, end: true },
   { to: '/app/limits', label: 'Limits', icon: SlidersHorizontal },
   { to: '/app/services', label: 'Services', icon: Search },
+  { to: '/app/disburse', label: 'Disburse', icon: ShieldCheck },
   { to: '/app/activity', label: 'Activity', icon: Activity },
   { to: '/app/vault', label: 'Vault', icon: Vault },
 ];

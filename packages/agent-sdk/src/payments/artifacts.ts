@@ -7,6 +7,10 @@
  * snarkjs the bytes directly.
  */
 
+import { DEFAULT_ARTIFACT_BASE_URL } from './artifacts-base.js';
+
+export { DEFAULT_ARTIFACT_BASE_URL };
+
 /** Where the circuit artifacts live: local paths, or URLs to download + cache. */
 export interface ArtifactSource {
   wasmPath?: string;
@@ -49,15 +53,13 @@ async function resolveOne(
     if (!(await exists(localPath))) throw new Error(`artifact not found: ${localPath}`);
     return localPath;
   }
-  if (url) {
-    const path = await import('node:path');
-    const fs = await import('node:fs/promises');
-    await fs.mkdir(cacheDir, { recursive: true });
-    const dest = path.join(cacheDir, cacheName);
-    if (!(await exists(dest))) await download(url, dest);
-    return dest;
-  }
-  throw new Error(`no path or url for ${cacheName}`);
+  const effectiveUrl = url || `${DEFAULT_ARTIFACT_BASE_URL}/${cacheName}`;
+  const path = await import('node:path');
+  const fs = await import('node:fs/promises');
+  await fs.mkdir(cacheDir, { recursive: true });
+  const dest = path.join(cacheDir, cacheName);
+  if (!(await exists(dest))) await download(effectiveUrl, dest);
+  return dest;
 }
 
 /**

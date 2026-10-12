@@ -7,14 +7,16 @@
  * limbs are emitted c1 || c0 (snarkjs stores [c0, c1]; Soroban wants them
  * reversed). payee_field = SHA-256(ScVal XDR) with the top 3 bits cleared.
  */
-import { createHash } from 'node:crypto';
-import { Address } from '@stellar/stellar-sdk';
+import { Address, hash } from '@stellar/stellar-sdk';
 
 const FP = 48;
 const FR = 32;
 
+// SHA-256 via stellar-sdk (same bytes as node:crypto's createHash) so this module
+// works in the browser too: stellar-sdk is already browser-bundled, and avoiding
+// node:crypto lets the dapp import the prover without a Node polyfill.
 function sha256(buf: Buffer): Buffer {
-  return createHash('sha256').update(buf).digest();
+  return Buffer.from(hash(buf));
 }
 
 /** A non-negative integer (decimal string or bigint) as a big-endian field element. */
