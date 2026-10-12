@@ -153,7 +153,7 @@ const OFFERINGS: { icon: typeof Wallet; name: string; status: OfferStatus; body:
     icon: Shield,
     name: 'Private spending policies',
     status: 'live',
-    body: 'Spending rules enforced on-chain but kept private, with a compliance proof. Live today via a binding proof on-chain; the Noir zero-knowledge circuit is built and proven in CI, with full on-chain verification on the roadmap.',
+    body: 'Spending rules enforced on-chain but kept private. A real zero-knowledge proof (Groth16 on BLS12-381) is verified on-chain today on testnet, no trusted prover, so the ledger shows a payment was allowed without revealing the rule that allowed it.',
   },
   {
     icon: Boxes,
@@ -314,9 +314,9 @@ export function Landing() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0b0d13] text-slate-200 overflow-x-hidden">
+    <div className="min-h-screen overflow-x-hidden bg-[#0a0b12] text-slate-200">
       <header
-        className={`fixed top-0 inset-x-0 z-40 transition-colors ${scrolled ? 'bg-[#0b0d13]/85 backdrop-blur border-b border-white/5' : ''}`}
+        className={`fixed top-0 inset-x-0 z-40 transition-colors ${scrolled ? 'border-b border-white/5 bg-[#0a0b12]/85 backdrop-blur' : ''}`}
       >
         <nav className="max-w-6xl mx-auto px-5 h-16 flex items-center justify-between">
           <Link to="/">
@@ -398,13 +398,16 @@ export function Landing() {
           </Reveal>
           <Reveal delay={320}>
             <div className="mt-10 flex items-center justify-center gap-x-6 gap-y-2 flex-wrap text-xs text-slate-500">
-              {['Non-custodial', 'Stellar Testnet', 'USDC settlement', 'Private by design'].map(
-                (t) => (
-                  <span key={t} className="inline-flex items-center gap-1.5">
-                    <CheckCircle2 size={12} className="text-emerald-500/80" /> {t}
-                  </span>
-                ),
-              )}
+              {[
+                'Non-custodial',
+                'Zero-knowledge, on-chain',
+                'USDC settlement',
+                'Live on testnet',
+              ].map((t) => (
+                <span key={t} className="inline-flex items-center gap-1.5">
+                  <CheckCircle2 size={12} className="text-emerald-500/80" /> {t}
+                </span>
+              ))}
             </div>
           </Reveal>
         </div>
