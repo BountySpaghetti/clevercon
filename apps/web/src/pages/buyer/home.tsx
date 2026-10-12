@@ -119,6 +119,33 @@ type Msg =
 const short = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
 const hasRule = (d: Draft) => !!d.perPaymentCeiling || !!d.rollingCap || d.allowlist.length > 0;
 
+// Map a limit the agent read from the instruction into an editable Draft, so the
+// enforced boundary comes from the user's own words and still shows in the picker.
+function draftFromSuggested(l: {
+  perPaymentCeilingUsdc?: number;
+  rollingCapUsdc?: number;
+  rollingWindowSecs?: number;
+}): Draft {
+  const rollingWindow: Draft['rollingWindow'] =
+    l.rollingWindowSecs === 86400
+      ? 'day'
+      : l.rollingWindowSecs === 604800
+        ? 'week'
+        : l.rollingWindowSecs === 2592000
+          ? 'month'
+          : l.rollingCapUsdc
+            ? 'month'
+            : 'none';
+  return {
+    ...emptyDraft(),
+    isPrivate: true,
+    perPaymentCeiling: l.perPaymentCeilingUsdc ? String(l.perPaymentCeilingUsdc) : '',
+    rollingCap: l.rollingCapUsdc ? String(l.rollingCapUsdc) : '',
+    rollingWindow,
+    allowlist: [],
+  };
+}
+
 // 'default' = the owner's default (or budget-only if none); 'custom' = the builder
 // below; 'none' = budget-only; otherwise a saved limit's id.
 type LimitChoice = 'default' | 'custom' | 'none' | string;
@@ -225,7 +252,19 @@ export function CommandChat() {
       });
       return;
     }
-    const bind = currentBind();
+    // If the agent read a limit from the words, adopt it as an editable custom
+    // limit (and reflect it in the picker) so the enforced boundary comes from
+    // the instruction itself. Otherwise fall back to the picked limit.
+    let bind = currentBind();
+    let appliedLimit = applied;
+    const extracted = result.limit;
+    if (extracted && (extracted.perPaymentCeilingUsdc || extracted.rollingCapUsdc)) {
+      const d = draftFromSuggested(extracted);
+      setCustomDraft(d);
+      setLimitChoice('custom');
+      bind = { draft: d };
+      appliedLimit = { label: describeRules(draftToRules(d).rules), isPrivate: d.isPrivate };
+    }
     if (result.kind === 'hire' && result.service) {
       push({
         id: nextId(),
@@ -235,7 +274,7 @@ export function CommandChat() {
           kind: 'hire',
           summary: `Hire ${result.service.name} (budget $${result.budget.toFixed(2)})`,
           lines: [{ payee: result.service.name, amount: result.budget, reason: 'service' }],
-          limit: applied,
+          limit: appliedLimit,
           bind,
           serviceName: result.service.name,
           serviceId: result.service.id,
@@ -259,7 +298,7 @@ export function CommandChat() {
               ? `Pay ${short(lines[0].payee)} $${lines[0].amount.toFixed(2)}`
               : `Disburse $${total.toFixed(2)} to ${lines.length} recipient${lines.length > 1 ? 's' : ''}`,
           lines,
-          limit: applied,
+          limit: appliedLimit,
           bind,
         },
       });

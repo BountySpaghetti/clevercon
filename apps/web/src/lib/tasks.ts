@@ -192,6 +192,12 @@ export interface AgentPlanResult {
   lines: PaymentLineInput[];
   service: { id: string; name: string; pricePerCall: number } | null;
   budget: number;
+  /** A spending limit the agent read from the instruction, for the user to confirm. */
+  limit: {
+    perPaymentCeilingUsdc?: number;
+    rollingCapUsdc?: number;
+    rollingWindowSecs?: number;
+  } | null;
   rationale: string;
   warnings: string[];
   source: 'llm' | 'fallback';
@@ -208,6 +214,7 @@ export async function planInstruction(instruction: string): Promise<AgentPlanRes
       lines: [],
       service: null,
       budget: 0,
+      limit: null,
       rationale: 'Connect a wallet (full mode) to use the agent.',
       warnings: [],
       source: 'fallback',
