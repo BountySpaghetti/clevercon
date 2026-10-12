@@ -165,22 +165,54 @@ export function LimitsBuilder({ value, onChange }: { value: Draft; onChange: (d:
             restrict it to only those.
           </p>
         ) : (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-2 space-y-1.5">
             {value.allowlist.map((a) => (
-              <span
+              <div
                 key={a}
-                className="inline-flex items-center gap-1 rounded-lg bg-white/[0.05] px-2 py-1 font-mono text-[11px] text-slate-300"
+                className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-2.5 py-1.5"
               >
-                {a.slice(0, 6)}…{a.slice(-4)}
-                <button
-                  onClick={() => set({ allowlist: value.allowlist.filter((x) => x !== a) })}
-                  className="text-slate-500 hover:text-red-300"
-                  aria-label="Remove"
-                >
-                  <Trash2 size={11} />
-                </button>
-              </span>
+                <span className="font-mono text-[11px] text-slate-300">
+                  {a.slice(0, 6)}…{a.slice(-4)}
+                </span>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-600">max $</span>
+                  <input
+                    value={value.allowlistCaps[a] ?? ''}
+                    onChange={(e) =>
+                      set({
+                        allowlistCaps: {
+                          ...value.allowlistCaps,
+                          [a]: e.target.value.replace(/[^0-9.]/g, ''),
+                        },
+                      })
+                    }
+                    inputMode="decimal"
+                    placeholder="any"
+                    className="w-20 rounded-md bg-black/30 px-2 py-1 text-right text-[11px] text-slate-100 outline-none"
+                    aria-label={`Per-payment cap for payee ${a.slice(0, 6)}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      set({
+                        allowlist: value.allowlist.filter((x) => x !== a),
+                        allowlistCaps: Object.fromEntries(
+                          Object.entries(value.allowlistCaps).filter(([k]) => k !== a),
+                        ),
+                      })
+                    }
+                    className="text-slate-500 hover:text-red-300"
+                    aria-label="Remove payee"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              </div>
             ))}
+            <p className="text-[11px] text-slate-600">
+              Leave &ldquo;max $&rdquo; blank to apply only the global ceiling, or set it to cap a
+              specific payee tighter (R5). Proven on-chain per payee.
+            </p>
           </div>
         )}
       </div>

@@ -17,6 +17,9 @@ export type Draft = {
   rollingCap: string;
   rollingWindow: keyof typeof WINDOWS;
   allowlist: string[];
+  // R5 per-payee cap: an optional max-per-payment for a specific approved payee,
+  // keyed by address (blank/absent = only the global ceiling applies to them).
+  allowlistCaps: Record<string, string>;
   // R7 velocity: at most this many payments per velocity window. Kept on the
   // device only (like the rest of the private rule), proven alongside the caps.
   velocityCount: string;
@@ -29,6 +32,7 @@ export const emptyDraft = (): Draft => ({
   rollingCap: '',
   rollingWindow: 'week',
   allowlist: [],
+  allowlistCaps: {},
   velocityCount: '',
   velocityWindow: 'week',
 });
@@ -49,6 +53,7 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '5000',
       rollingWindow: 'month',
       allowlist: [],
+      allowlistCaps: {},
       velocityCount: '',
       velocityWindow: 'week',
     }),
@@ -64,6 +69,7 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '20000',
       rollingWindow: 'month',
       allowlist: [],
+      allowlistCaps: {},
       velocityCount: '',
       velocityWindow: 'week',
     }),
@@ -78,6 +84,7 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '',
       rollingWindow: 'month',
       allowlist: [],
+      allowlistCaps: {},
       velocityCount: '',
       velocityWindow: 'week',
     }),
@@ -93,6 +100,7 @@ export const TEMPLATES: PolicyTemplate[] = [
       rollingCap: '200',
       rollingWindow: 'week',
       allowlist: [],
+      allowlistCaps: {},
       velocityCount: '',
       velocityWindow: 'week',
     }),
@@ -195,7 +203,12 @@ export function draftToBundleRules(d: Draft): PolicyBundleRules {
     perPaymentCeilingUsdc: d.perPaymentCeiling ? Number(d.perPaymentCeiling) : 0,
     rollingCapUsdc: rollOn ? Number(d.rollingCap) : undefined,
     rollingWindowSecs: rollOn ? rollSecs : undefined,
-    allowlist: d.allowlist.length ? d.allowlist.map((a) => ({ payeeAddress: a })) : undefined,
+    allowlist: d.allowlist.length
+      ? d.allowlist.map((a) => {
+          const cap = d.allowlistCaps[a];
+          return cap ? { payeeAddress: a, perPayeeCapUsdc: Number(cap) } : { payeeAddress: a };
+        })
+      : undefined,
     maxReleasesPerWindow: velOn ? Number(d.velocityCount) : undefined,
     velocityWindowSecs: velOn ? velSecs : undefined,
   };
