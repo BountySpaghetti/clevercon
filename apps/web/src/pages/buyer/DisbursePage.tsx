@@ -12,16 +12,22 @@ import {
   Layers,
 } from 'lucide-react';
 import { apiPost } from '../../lib/api';
-import { getPolicies } from '../../lib/policies';
-import { describeSavedLimit } from './limits-model';
+import { getPolicies, type PolicyRules } from '../../lib/policies';
+import { describeSavedLimit, savedLimitRules, rulesToBundleRules } from './limits-model';
 import {
   createBatchProof,
   policyWitnessFromBundle,
+  buildPolicyWitness,
+  makePoseidon,
   newSalt,
   buildBatchReleaseRequest,
   DEFAULT_ARTIFACT_BASE_URL,
+  DEFAULT_POSEIDON_ARTIFACTS,
   type BatchRelease,
   type BatchContext,
+  type Allowlist,
+  type PolicyWitness,
+  type PolicyBundleRules,
 } from '@clevercon/agent-sdk/prover';
 
 const STROOPS = 10_000_000;
@@ -42,6 +48,9 @@ type Phase = 'idle' | 'proving' | 'relaying' | 'done';
  */
 export function DisbursePage() {
   const [ceiling, setCeiling] = useState('10');
+  // The picked saved limit's rules (allowlist / rolling cap / deny-list) minus the
+  // ceiling, which stays its own editable field. Proven alongside the ceiling.
+  const [savedRules, setSavedRules] = useState<PolicyRules | null>(null);
   const [lines, setLines] = useState<Line[]>([{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
@@ -58,12 +67,34 @@ export function DisbursePage() {
     .slice(0, MAX_RECIPIENTS);
   const total = active.reduce((s, l) => s + Number(l.amount), 0);
   const batches = Math.max(1, Math.ceil(active.length / PROOF_WIDTH));
-  const canSubmit = Number(ceiling) > 0 && active.length > 0;
+
+  // If the picked limit carries an allowlist (R3), every recipient must be on it:
+  // the proof cannot authorise a payee outside the committed set. Flag any early so
+  // the owner sees it before proving rather than as a proof failure.
+  const allowSet = savedRules?.allowlist?.length
+    ? new Set(savedRules.allowlist.map((a) => a.trim()))
+    : null;
+  const offAllowlist = allowSet ? active.filter((l) => !allowSet.has(l.payee.trim())) : [];
+  const canSubmit = Number(ceiling) > 0 && active.length > 0 && offAllowlist.length === 0;
 
   const disburse = useMutation<Result>({
     mutationFn: async () => {
       const over = active.find((l) => Number(l.amount) > Number(ceiling));
       if (over) throw new Error(`each payout must be at or under the ceiling (${ceiling} USDC)`);
+
+      // The rules proven on-chain: the ceiling (always) plus whatever the picked
+      // saved limit carries (allowlist, rolling cap, deny-list). A bare ceiling is
+      // field-only; an allowlist pulls in the Poseidon oracle for the Merkle root.
+      const bundleRules: PolicyBundleRules = savedRules
+        ? rulesToBundleRules(savedRules, Number(ceiling))
+        : { perPaymentCeilingUsdc: Number(ceiling) };
+      const needsFull = !!(
+        bundleRules.allowlist?.length ||
+        bundleRules.denylist?.length ||
+        bundleRules.calendarWindows?.length ||
+        bundleRules.categoryCeilingsUsdc?.length
+      );
+      const poseidon = needsFull ? await makePoseidon(DEFAULT_POSEIDON_ARTIFACTS) : null;
 
       const groups: Line[][] = [];
       for (let i = 0; i < active.length; i += PROOF_WIDTH)
@@ -74,16 +105,27 @@ export function DisbursePage() {
       for (let g = 0; g < groups.length; g++) {
         setProgress({ i: g + 1, n: groups.length });
         setPhase('proving');
-        const policy = policyWitnessFromBundle({
-          rules: { perPaymentCeilingUsdc: Number(ceiling) },
-          salt: newSalt(),
-        });
+        const bundle = { rules: bundleRules, salt: newSalt() };
+        let policy: PolicyWitness;
+        let allowlist: Allowlist | undefined;
+        if (poseidon) {
+          ({ policy, allowlist } = await buildPolicyWitness(bundle, poseidon));
+        } else {
+          policy = policyWitnessFromBundle(bundle);
+        }
         const base = Date.now();
-        const releases: BatchRelease[] = groups[g].map((l, i) => ({
-          payeeAddress: l.payee.trim(),
-          amountStroops: String(BigInt(Math.round(Number(l.amount) * STROOPS))),
-          spendCounter: String(base + i),
-        }));
+        const releases: BatchRelease[] = groups[g].map((l, i) => {
+          const payee = l.payee.trim();
+          const membership = allowlist?.membership(payee);
+          if (allowlist && !membership)
+            throw new Error(`${payee} is not on this limit's approved-payee list`);
+          return {
+            payeeAddress: payee,
+            amountStroops: String(BigInt(Math.round(Number(l.amount) * STROOPS))),
+            spendCounter: String(base + i),
+            membership,
+          };
+        });
         const now = Math.floor(Date.now() / 1000);
         const ctx: BatchContext = {
           validAfter: String(now - 3600),
@@ -197,24 +239,28 @@ export function DisbursePage() {
                   defaultValue=""
                   onChange={(e) => {
                     const p = policies.find((x) => x.id === e.target.value);
-                    const c = p?.rules?.perPaymentCeilingUsdc;
-                    if (c) setCeiling(String(c));
+                    const r = p ? savedLimitRules(p) : null;
+                    setSavedRules(r);
+                    if (r?.perPaymentCeilingUsdc) setCeiling(String(r.perPaymentCeilingUsdc));
                   }}
                   className="cc-input mt-1.5 text-sm"
                   aria-label="Start from a saved limit"
                 >
-                  <option value="">Type a ceiling below…</option>
-                  {policies.map((p) => (
-                    <option key={p.id} value={p.id} disabled={!p.rules?.perPaymentCeilingUsdc}>
-                      {describeSavedLimit(p)}
-                      {!p.rules?.perPaymentCeilingUsdc ? ' · needs full prover' : ''}
-                    </option>
-                  ))}
+                  <option value="">No saved limit · ceiling only…</option>
+                  {policies.map((p) => {
+                    const readable = !!savedLimitRules(p);
+                    return (
+                      <option key={p.id} value={p.id} disabled={!readable}>
+                        {describeSavedLimit(p)}
+                        {!readable ? ' · created on another device' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
                 <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
-                  Prefills the ceiling from a saved limit. This trustless disburse proves the
-                  per-payment ceiling on-chain today; allowlists and rolling caps are enforced on
-                  the Agent tab, trustless proving of all rules here is coming.
+                  Proves the whole limit on-chain in your browser: the ceiling plus the saved
+                  limit&apos;s approved-payee allowlist, rolling cap, and deny-list. Nothing about
+                  the rule leaves this device; only the proof is relayed.
                 </p>
               </div>
             )}
@@ -243,13 +289,14 @@ export function DisbursePage() {
               </label>
               {lines.map((l, i) => {
                 const overLimit = Number(l.amount) > Number(ceiling) && Number(l.amount) > 0;
+                const offList = !!allowSet && l.payee.trim() !== '' && !allowSet.has(l.payee.trim());
                 return (
                   <div key={i} className="flex items-center gap-2">
                     <input
                       placeholder="Payee address (G...)"
                       value={l.payee}
                       onChange={(e) => setLine(i, { payee: e.target.value })}
-                      className="cc-input min-w-0 flex-1 font-mono text-xs"
+                      className={`cc-input min-w-0 flex-1 font-mono text-xs ${offList ? '!border-amber-500/60' : ''}`}
                       aria-label={`Payee ${i + 1} address`}
                     />
                     <input
@@ -289,7 +336,27 @@ export function DisbursePage() {
                 One proof covers {PROOF_WIDTH} payouts; longer lists are proven in {PROOF_WIDTH}
                 -at-a-time batches automatically.
               </p>
+              {offAllowlist.length > 0 && (
+                <p className="text-[11px] text-amber-300">
+                  {offAllowlist.length} recipient{offAllowlist.length > 1 ? 's are' : ' is'} not on
+                  this limit&apos;s approved-payee list. The proof can only pay approved payees.
+                </p>
+              )}
             </div>
+
+            {savedRules && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="cc-pill">Ceiling</span>
+                {savedRules.allowlist?.length ? (
+                  <span className="cc-pill">Allowlist · {savedRules.allowlist.length}</span>
+                ) : null}
+                {savedRules.rollingCapUsdc != null ? <span className="cc-pill">Rolling cap</span> : null}
+                {savedRules.denylist?.length ? <span className="cc-pill">Deny-list</span> : null}
+                <span className="ml-1 self-center text-[11px] text-slate-500">
+                  proven on-chain in this disbursement
+                </span>
+              </div>
+            )}
 
             <div className="flex items-center justify-between gap-3 border-t border-line pt-4">
               <div className="text-sm text-slate-400">

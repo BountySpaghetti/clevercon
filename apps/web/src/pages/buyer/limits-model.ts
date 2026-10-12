@@ -1,4 +1,5 @@
 import type { PolicyRules } from '../../lib/policies';
+import type { PolicyBundleRules } from '@clevercon/agent-sdk/prover';
 
 // Non-component helpers for the limits UI, kept out of the component module so
 // React Fast Refresh can hot-update the components cleanly.
@@ -160,4 +161,38 @@ export function setDefaultLimitId(id: string): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * The plaintext rules behind a saved limit: the server-held rule for transparent
+ * limits, else this device's local copy for private ones (the server keeps only a
+ * commitment). Returns null when neither is available (a private limit created on
+ * another device).
+ */
+export function savedLimitRules(p: { rules?: PolicyRules | null; commitment: string }): PolicyRules | null {
+  if (p.rules) return p.rules;
+  try {
+    const cached = localStorage.getItem(LIMIT_CACHE_PREFIX + p.commitment);
+    if (cached) return draftToRules(JSON.parse(cached) as Draft).rules;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Map the web saved-limit rule shape onto the SDK prover's {@link PolicyBundleRules}
+ * so Disburse can prove the whole limit (ceiling, rolling cap, allowlist, deny-list)
+ * in the browser. The per-payment ceiling is passed in because Disburse keeps it as
+ * its own editable field (the rest ride the saved limit).
+ */
+export function rulesToBundleRules(r: PolicyRules, perPaymentCeilingUsdc: number): PolicyBundleRules {
+  return {
+    perPaymentCeilingUsdc,
+    rollingCapUsdc: r.rollingCapUsdc,
+    rollingWindowSecs: r.rollingWindowSecs,
+    allowlist: r.allowlist?.length ? r.allowlist.map((a) => ({ payeeAddress: a })) : undefined,
+    denylist: r.denylist?.length ? r.denylist : undefined,
+    denylistThresholdUsdc: r.denylistThresholdUsdc,
+  };
 }
