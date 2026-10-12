@@ -83,11 +83,7 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-2xl border border-line bg-surface shadow-card ${
-        interactive
-          ? 'cursor-pointer transition duration-200 hover:border-line-strong hover:bg-surface-2 hover:shadow-pop motion-safe:hover:-translate-y-0.5'
-          : ''
-      } ${className}`}
+      className={`cc-card rounded-2xl ${interactive ? 'cc-hover cursor-pointer' : ''} ${className}`}
     >
       {children}
     </div>

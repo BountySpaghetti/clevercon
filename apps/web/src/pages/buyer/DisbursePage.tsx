@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Plus,
   X,
@@ -12,6 +12,8 @@ import {
   Layers,
 } from 'lucide-react';
 import { apiPost } from '../../lib/api';
+import { getPolicies } from '../../lib/policies';
+import { describeSavedLimit } from './limits-model';
 import {
   createBatchProof,
   policyWitnessFromBundle,
@@ -43,6 +45,7 @@ export function DisbursePage() {
   const [lines, setLines] = useState<Line[]>([{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
+  const { data: policies = [] } = useQuery({ queryKey: ['policies'], queryFn: getPolicies });
 
   const setLine = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -185,6 +188,37 @@ export function DisbursePage() {
               if (canSubmit && !busy) disburse.mutate();
             }}
           >
+            {policies.length > 0 && (
+              <div>
+                <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
+                  Start from a saved limit (optional)
+                </label>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    const p = policies.find((x) => x.id === e.target.value);
+                    const c = p?.rules?.perPaymentCeilingUsdc;
+                    if (c) setCeiling(String(c));
+                  }}
+                  className="cc-input mt-1.5 text-sm"
+                  aria-label="Start from a saved limit"
+                >
+                  <option value="">Type a ceiling below…</option>
+                  {policies.map((p) => (
+                    <option key={p.id} value={p.id} disabled={!p.rules?.perPaymentCeilingUsdc}>
+                      {describeSavedLimit(p)}
+                      {!p.rules?.perPaymentCeilingUsdc ? ' · needs full prover' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                  Prefills the ceiling from a saved limit. This trustless disburse proves the
+                  per-payment ceiling on-chain today; allowlists and rolling caps are enforced on
+                  the Agent tab, trustless proving of all rules here is coming.
+                </p>
+              </div>
+            )}
+
             <div>
               <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
                 Per-payment ceiling (USDC) · the private rule

@@ -486,65 +486,68 @@ export function CommandChat() {
 
         {/* Composer */}
         <div className="mt-4 border-t border-line pt-4">
-          {/* Natural language: the agent parses it into a plan you approve. */}
-          <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
-            Instruct your agent
-          </label>
-          <textarea
-            value={nl}
-            onChange={(e) => setNl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                askAgent();
-              }
-            }}
-            rows={3}
-            placeholder="e.g. Pay GC3F… 420 USDC for design and MEI… 275 for docs. Or: split 900 USDC evenly between these three addresses."
-            className="cc-input mt-1.5 w-full resize-none text-[15px] leading-relaxed"
-          />
+          {/* Natural language: the agent parses it into a plan. The instruction
+              bar is the focal hero of this page, so give it an accented panel. */}
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-violet-200/90">
+              Instruct your agent
+            </label>
+            <textarea
+              value={nl}
+              onChange={(e) => setNl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  askAgent();
+                }
+              }}
+              rows={5}
+              placeholder="e.g. Pay GC3F… 420 USDC for design and MEI… 275 for docs — max 500 each. Or: split 900 USDC evenly between these three addresses."
+              className="cc-input mt-1.5 min-h-[9rem] w-full resize-none text-base leading-relaxed"
+            />
 
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300">
-              <SlidersHorizontal size={13} className="text-violet-300" /> Enforced limit
-            </span>
-            <select
-              value={limitChoice}
-              onChange={(e) => setLimitChoice(e.target.value)}
-              className="cc-input max-w-[17rem] flex-1 !py-1.5 text-sm"
-              aria-label="Limit the vault enforces for this instruction"
-            >
-              <option value="default">
-                {defaultPolicy ? `Default · ${describeSavedLimit(defaultPolicy)}` : 'Budget only'}
-              </option>
-              {policies.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.isPrivate ? 'Private' : 'Transparent'} · {describeSavedLimit(p)}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300">
+                <SlidersHorizontal size={13} className="text-violet-300" /> Enforced limit
+              </span>
+              <select
+                value={limitChoice}
+                onChange={(e) => setLimitChoice(e.target.value)}
+                className="cc-input max-w-[17rem] flex-1 !py-1.5 text-sm"
+                aria-label="Limit the vault enforces for this instruction"
+              >
+                <option value="default">
+                  {defaultPolicy ? `Default · ${describeSavedLimit(defaultPolicy)}` : 'Budget only'}
                 </option>
-              ))}
-              {defaultPolicy && <option value="none">No limit (budget only)</option>}
-            </select>
-            <Link to="/app/limits" className="text-xs text-violet-300 hover:text-violet-200">
-              Manage limits
-            </Link>
-            <button
-              onClick={askAgent}
-              disabled={!nl.trim() || planMut.isPending}
-              className={`${primaryBtn} ml-auto`}
-            >
-              {planMut.isPending ? 'Thinking…' : 'Plan it'}
-            </button>
-          </div>
+                {policies.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.isPrivate ? 'Private' : 'Transparent'} · {describeSavedLimit(p)}
+                  </option>
+                ))}
+                {defaultPolicy && <option value="none">No limit (budget only)</option>}
+              </select>
+              <Link to="/app/limits" className="text-xs text-violet-300 hover:text-violet-200">
+                Manage limits
+              </Link>
+              <button
+                onClick={askAgent}
+                disabled={!nl.trim() || planMut.isPending}
+                className={`${primaryBtn} ml-auto`}
+              >
+                {planMut.isPending ? 'Thinking…' : 'Plan it'}
+              </button>
+            </div>
 
-          <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-500">
-            <ShieldCheck size={13} className="mt-0.5 shrink-0 text-violet-300" />
-            <span>
-              Your words decide <span className="text-slate-300">what</span> to do; the vault
-              enforces the limit you pick here, on-chain, so the agent can&apos;t overspend or pay
-              outside it no matter what the text says. You approve a checked plan before anything
-              moves.
-            </span>
-          </p>
+            <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-500">
+              <ShieldCheck size={13} className="mt-0.5 shrink-0 text-violet-300" />
+              <span>
+                Your words decide <span className="text-slate-300">what</span> to do; the vault
+                enforces the limit you pick here, on-chain, so the agent can&apos;t overspend or pay
+                outside it no matter what the text says. You approve a checked plan before anything
+                moves.
+              </span>
+            </p>
+          </div>
 
           <div className="mb-2 mt-4 text-[11px] uppercase tracking-wider text-slate-600">
             or use a quick action
@@ -1001,7 +1004,7 @@ function FirstRunGuide() {
 
 export function Home() {
   return (
-    <div className="space-y-6">
+    <div className="cc-stagger space-y-6">
       <PageHeader
         eyebrow="Agent"
         title="Tell your agent what to do"
