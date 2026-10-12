@@ -284,11 +284,7 @@ export function VaultCard() {
   } = useQuery({ queryKey: ['vault'], queryFn: getVault, refetchInterval: 12_000 });
   const { data: status } = useQuery({ queryKey: ['vault-status'], queryFn: getVaultStatus });
   const [amount, setAmount] = useState('');
-  const rows: [string, number, string][] = [
-    ['Balance', vault?.balance ?? 0, 'text-white'],
-    ['Available', vault?.available ?? 0, 'text-emerald-300'],
-    ['Locked', vault?.locked ?? 0, 'text-amber-300'],
-  ];
+  const lockedPct = Math.min(100, ((vault?.locked ?? 0) / (vault?.balance || 1)) * 100);
 
   const move = useMutation({
     mutationFn: (kind: 'deposit' | 'withdraw') =>
@@ -325,79 +321,67 @@ export function VaultCard() {
         }
       />
       <div className="p-5 pt-4">
-        {error && <p className="mb-3 text-sm text-red-400">Could not load your vault.</p>}
-        <div className="grid grid-cols-3 gap-3">
-          {rows.map(([label, v, tint]) => (
-            <div
-              key={label}
-              title={VAULT_HINTS[label]}
-              className="cursor-help rounded-xl bg-black/25 p-3 text-center"
-            >
-              <div className={`text-lg font-bold ${tint}`}>
-                {isLoading ? '…' : `$${v.toFixed(2)}`}
-              </div>
-              <div className="text-[11px] uppercase tracking-wider text-slate-500">
-                {label} USDC
-              </div>
-            </div>
-          ))}
+        {error && <p className="mb-3 text-sm text-amber-300">Could not load your vault.</p>}
+
+        <div title={VAULT_HINTS['Balance']}>
+          <div className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
+            Vault balance
+          </div>
+          <div className="cc-hero-num mt-1.5 text-white">
+            {isLoading ? '—' : `$${(vault?.balance ?? 0).toFixed(2)}`}
+            <span className="ml-1.5 text-base font-semibold text-slate-500">USDC</span>
+          </div>
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">
-          Balance held in the vault. Available = balance minus what active jobs have locked.
-        </p>
+
         {!isLoading && (vault?.balance ?? 0) > 0 && (
           <div className="mt-4">
-            <div className="flex h-2.5 overflow-hidden rounded-full bg-white/[0.06]">
-              <span
-                className="h-full bg-gradient-to-r from-violet-600 to-violet-400"
-                style={{
-                  width: `${Math.min(100, ((vault?.locked ?? 0) / (vault?.balance || 1)) * 100)}%`,
-                }}
-              />
-              <span
-                className="h-full bg-emerald-400/80"
-                style={{
-                  width: `${100 - Math.min(100, ((vault?.locked ?? 0) / (vault?.balance || 1)) * 100)}%`,
-                }}
-              />
+            <div className="cc-meter">
+              <i className="locked" style={{ width: `${lockedPct}%` }} />
+              <i className="avail" style={{ width: `${100 - lockedPct}%` }} />
             </div>
-            <div className="mt-2.5 flex gap-4 text-[11px] text-slate-400">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Available to spend
+            <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-slate-400">
+              <span className="inline-flex items-center gap-1.5" title={VAULT_HINTS['Available']}>
+                <span className="h-2 w-2 rounded-sm bg-emerald-400" /> Available
+                <b className="cc-num ml-0.5 font-mono text-slate-200">
+                  ${(vault?.available ?? 0).toFixed(2)}
+                </b>
               </span>
-              <span className="inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5" title={VAULT_HINTS['Locked']}>
                 <span className="h-2 w-2 rounded-sm bg-violet-500" /> Locked in jobs
+                <b className="cc-num ml-0.5 font-mono text-slate-200">
+                  ${(vault?.locked ?? 0).toFixed(2)}
+                </b>
               </span>
             </div>
           </div>
         )}
 
         {enabled ? (
-          <div className="mt-4">
+          <div className="mt-5 border-t border-line pt-4">
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               inputMode="decimal"
               placeholder="Amount (USDC)"
-              className={inputCls}
+              className="cc-input cc-num"
             />
             <div className="mt-2 flex gap-2">
               <button
                 onClick={() => canMove && move.mutate('deposit')}
                 disabled={!canMove}
-                className={`flex-1 ${primaryBtn}`}
+                className="cc-btn flex-1"
               >
                 {move.isPending ? 'Signing…' : 'Deposit'}
               </button>
               <button
                 onClick={() => canMove && move.mutate('withdraw')}
                 disabled={!canMove}
-                className={`flex-1 ${controls.secondary} disabled:cursor-not-allowed disabled:opacity-50`}
+                className="cc-btn cc-btn-ghost flex-1"
               >
                 Withdraw
               </button>
             </div>
-            {move.error && <p className="mt-2 text-sm text-red-400">{readError(move.error)}</p>}
+            {move.error && <p className="mt-2 text-sm text-amber-300">{readError(move.error)}</p>}
             {move.isSuccess && (
               <p className="mt-2 text-sm text-emerald-300">
                 Submitted. Your balance updates automatically in a few seconds.
