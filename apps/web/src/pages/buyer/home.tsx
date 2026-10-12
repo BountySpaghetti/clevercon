@@ -29,7 +29,7 @@ import {
   planInstruction,
   type HireMode,
 } from '../../lib/tasks';
-import { Card, CardHeader, EmptyState, controls } from '../../components/ui';
+import { Card, CardHeader, EmptyState, PageHeader, controls } from '../../components/ui';
 import { LimitsBuilder } from './limits';
 import {
   describeRules,
@@ -905,6 +905,11 @@ function FirstRunGuide() {
 export function Home() {
   return (
     <div className="space-y-6">
+      <PageHeader
+        eyebrow="Agent"
+        title="Tell your agent what to do"
+        subtitle="Put an AI agent in charge of your money, within private limits it can't break. Instruct it in plain language; approve a checked plan; the vault enforces the rule."
+      />
       {/* Command-first: the agent prompt + quick actions are the subject of the
           page; the budget is a compact strip above it, funding lives on Vault. */}
       <VaultStrip />

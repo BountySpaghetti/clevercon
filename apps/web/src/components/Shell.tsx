@@ -1,6 +1,18 @@
 import { useState, type ComponentType, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Layers, Bot, Store, ShieldCheck, Terminal, PanelLeftClose, PanelLeft } from 'lucide-react';
+import {
+  Layers,
+  Bot,
+  SlidersHorizontal,
+  Search,
+  ShieldCheck,
+  Activity as ActivityIcon,
+  Vault as VaultIcon,
+  Store,
+  Terminal,
+  Menu,
+  X,
+} from 'lucide-react';
 import { useSession, type Role } from '../store/session';
 import { useWalletAuth } from '../auth/useWalletAuth';
 import { DemoBanner } from './DemoBanner';
@@ -8,8 +20,6 @@ import { config } from '../config';
 
 type Icon = ComponentType<{ size?: number; className?: string }>;
 
-// Which Stellar network the app is pointed at. Testnet is amber (test funds, no
-// real value); mainnet is emerald (live). Driven by config, not hardcoded.
 const NETWORKS: Record<string, { label: string; dot: string; text: string; border: string }> = {
   testnet: {
     label: 'Stellar testnet',
@@ -23,20 +33,44 @@ const NETWORKS: Record<string, { label: string; dot: string; text: string; borde
     text: 'text-emerald-300',
     border: 'border-emerald-500/25',
   },
-  local: {
-    label: 'Local',
-    dot: 'bg-slate-400',
-    text: 'text-slate-400',
-    border: 'border-white/10',
-  },
+  local: { label: 'Local', dot: 'bg-slate-400', text: 'text-slate-400', border: 'border-white/10' },
 };
 
-/** The active-network badge, shown across the app so the network is never ambiguous. */
-function NetworkBadge({ className = '' }: { className?: string }) {
+// The agent console is the product. Its sections are the primary rail, matching
+// the money-app concept: one place for the agent, the rules, the market, the
+// money, and the proof of every spend.
+const PRIMARY: { to: string; label: string; icon: Icon; end?: boolean }[] = [
+  { to: '/app', label: 'Agent', icon: Bot, end: true },
+  { to: '/app/limits', label: 'Limits', icon: SlidersHorizontal },
+  { to: '/app/services', label: 'Services', icon: Search },
+  { to: '/app/disburse', label: 'Disburse', icon: ShieldCheck },
+  { to: '/app/activity', label: 'Activity', icon: ActivityIcon },
+  { to: '/app/vault', label: 'Vault', icon: VaultIcon },
+];
+
+// Other consoles, shown only to accounts that hold (or can self-serve) the role.
+const CONSOLES: { to: string; label: string; role: Role; icon: Icon; selfServe?: boolean }[] = [
+  { to: '/provider', label: 'Provider', role: 'PROVIDER', icon: Store, selfServe: true },
+  { to: '/developers', label: 'Developer', role: 'DEVELOPER', icon: Terminal, selfServe: true },
+  { to: '/admin', label: 'Admin', role: 'ADMIN', icon: ShieldCheck },
+];
+
+function Brand() {
+  return (
+    <Link to="/" className="flex items-center gap-2.5 px-2">
+      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-700 shadow-lg shadow-violet-900/40">
+        <Layers size={16} className="text-white" />
+      </span>
+      <span className="text-[15px] font-bold tracking-tight text-white">CleverCon</span>
+    </Link>
+  );
+}
+
+function NetworkBadge() {
   const net = NETWORKS[config.network] ?? NETWORKS.testnet;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border bg-white/[0.03] px-2.5 py-1 text-[11px] ${net.border} ${net.text} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border bg-white/[0.03] px-2.5 py-1 text-[11px] ${net.border} ${net.text}`}
       title={`This app is operating against ${net.label}.`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${net.dot}`} /> {net.label}
@@ -44,37 +78,14 @@ function NetworkBadge({ className = '' }: { className?: string }) {
   );
 }
 
-/** A permanent reassurance: funds are self-custodied, the platform never holds them. */
-function NonCustodialBadge({ className = '' }: { className?: string }) {
+function NonCustodialBadge() {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/[0.06] px-2.5 py-1 text-[11px] text-emerald-300 ${className}`}
+      className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/[0.06] px-2.5 py-1 text-[11px] text-emerald-300"
       title="Your funds stay in your own vault. CleverCon never takes custody."
     >
       <ShieldCheck size={12} /> Non-custodial
     </span>
-  );
-}
-
-// `selfServe` links are shown to any signed-in user (the console itself is the
-// place you acquire the role); the rest appear only once the role is held.
-const NAV: { to: string; label: string; role: Role; icon: Icon; selfServe?: boolean }[] = [
-  { to: '/app', label: 'Your agent', role: 'BUYER', icon: Bot },
-  { to: '/provider', label: 'Provider', role: 'PROVIDER', icon: Store, selfServe: true },
-  { to: '/admin', label: 'Admin', role: 'ADMIN', icon: ShieldCheck },
-  { to: '/developers', label: 'Developer', role: 'DEVELOPER', icon: Terminal, selfServe: true },
-];
-
-function Brand({ compact = false }: { compact?: boolean }) {
-  return (
-    <Link to="/" className="flex items-center gap-2.5">
-      <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-700 shadow-lg shadow-violet-900/40">
-        <Layers size={16} className="text-white" />
-      </div>
-      {!compact && (
-        <span className="text-[15px] font-bold tracking-tight text-white">CleverCon</span>
-      )}
-    </Link>
   );
 }
 
@@ -85,7 +96,8 @@ function WalletButton({ full = false }: { full?: boolean }) {
     return (
       <button
         onClick={disconnect}
-        className={`rounded-lg bg-white/[0.06] px-3 py-2 font-mono text-xs text-slate-300 hover:bg-white/10 transition-colors ${full ? 'w-full text-left' : ''}`}
+        className={`rounded-xl border border-line-strong bg-white/[0.03] px-3 py-2 text-left font-mono text-xs text-slate-300 transition-colors hover:bg-white/[0.07] ${full ? 'w-full' : ''}`}
+        title="Disconnect wallet"
       >
         {session.address.slice(0, 4)}…{session.address.slice(-4)}
         <span className="text-slate-500"> · Disconnect</span>
@@ -95,144 +107,134 @@ function WalletButton({ full = false }: { full?: boolean }) {
   return (
     <Link
       to="/connect"
-      className={`rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2 text-sm font-medium text-white hover:from-violet-500 hover:to-indigo-500 transition-all ${full ? 'block text-center' : ''}`}
+      className={`rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2 text-center text-sm font-semibold text-white transition-all hover:from-violet-500 hover:to-indigo-500 ${full ? 'block' : ''}`}
     >
       Connect
     </Link>
   );
 }
 
-export function Shell({ children }: { children: ReactNode }) {
+function NavRail({ onNavigate }: { onNavigate?: () => void }) {
   const session = useSession((s) => s.session);
   const loc = useLocation();
   const roles = session?.roles ?? [];
-  const [collapsed, setCollapsed] = useState(
-    () => typeof localStorage !== 'undefined' && localStorage.getItem('cc:nav:collapsed') === '1',
+  const isActive = (to: string, end?: boolean) =>
+    end ? loc.pathname === to : loc.pathname === to || loc.pathname.startsWith(to + '/');
+  const consoles = CONSOLES.filter((c) => roles.includes(c.role) || (c.selfServe && session));
+
+  const Item = ({
+    to,
+    label,
+    icon: I,
+    end,
+  }: {
+    to: string;
+    label: string;
+    icon: Icon;
+    end?: boolean;
+  }) => {
+    const active = isActive(to, end);
+    return (
+      <Link
+        to={to}
+        onClick={onNavigate}
+        className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
+          active
+            ? 'bg-violet-500/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(139,124,255,0.25)]'
+            : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
+        }`}
+      >
+        <I size={17} className={active ? 'text-violet-300' : ''} />
+        {label}
+      </Link>
+    );
+  };
+
+  return (
+    <div className="flex h-full flex-col gap-1">
+      <div className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+        Console
+      </div>
+      {session ? (
+        PRIMARY.map((n) => <Item key={n.to} {...n} />)
+      ) : (
+        <p className="px-3 text-xs text-slate-600">Connect a wallet to begin.</p>
+      )}
+
+      {consoles.length > 0 && (
+        <>
+          <div className="px-3 pb-2 pt-5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+            Switch
+          </div>
+          {consoles.map((n) => (
+            <Item key={n.to} {...n} />
+          ))}
+        </>
+      )}
+
+      <div className="mt-auto flex flex-col gap-3 pt-6">
+        <div className="flex flex-wrap gap-2 px-1">
+          <NetworkBadge />
+          <NonCustodialBadge />
+        </div>
+        <WalletButton full />
+      </div>
+    </div>
   );
+}
 
-  // The landing page is a full-bleed marketing page with its own header/footer.
+export function Shell({ children }: { children: ReactNode }) {
+  const loc = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // The landing page is a full-bleed marketing page with its own chrome.
   if (loc.pathname === '/') return <>{children}</>;
-
-  const items = NAV.filter((n) => roles.includes(n.role) || (n.selfServe && session));
-  const isActive = (to: string) => loc.pathname === to || loc.pathname.startsWith(to + '/');
-  const net = NETWORKS[config.network] ?? NETWORKS.testnet;
-  const toggle = () =>
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        localStorage.setItem('cc:nav:collapsed', next ? '1' : '0');
-      } catch {
-        /* storage unavailable */
-      }
-      return next;
-    });
 
   return (
     <div className="relative min-h-screen text-slate-100">
       <div className="app-ambient" aria-hidden />
-      {/* Desktop sidebar, collapsible to an icon rail. */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-white/5 bg-black/30 py-5 backdrop-blur-xl transition-[width] duration-200 lg:flex ${
-          collapsed ? 'w-16 items-center px-2' : 'w-60 px-4'
-        }`}
-      >
-        <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
-          <Brand compact={collapsed} />
-          {!collapsed && (
-            <button
-              onClick={toggle}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-white"
-            >
-              <PanelLeftClose size={16} />
-            </button>
-          )}
-        </div>
 
-        <nav className="mt-8 flex w-full flex-col gap-1">
-          {!collapsed && (
-            <p className="px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-600">
-              Consoles
-            </p>
-          )}
-          {items.map((n) => {
-            const active = isActive(n.to);
-            return (
-              <Link
-                key={n.to}
-                to={n.to}
-                title={collapsed ? n.label : undefined}
-                className={`relative flex items-center gap-3 rounded-lg py-2 text-sm transition-colors ${
-                  collapsed ? 'justify-center px-0' : 'px-3'
-                } ${
-                  active
-                    ? 'bg-violet-500/[0.12] text-white'
-                    : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
-                }`}
-              >
-                {active && !collapsed && (
-                  <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-violet-400" />
-                )}
-                <n.icon size={16} className={active ? 'text-violet-300' : ''} />
-                {!collapsed && n.label}
-              </Link>
-            );
-          })}
-          {items.length === 0 && !collapsed && (
-            <p className="px-3 text-xs text-slate-600">Connect a wallet to begin.</p>
-          )}
-        </nav>
-
-        <div className={`mt-auto flex flex-col gap-3 ${collapsed ? 'items-center' : ''}`}>
-          {collapsed ? (
-            <>
-              <span className={`h-2 w-2 rounded-full ${net.dot}`} title={net.label} />
-              <button
-                onClick={toggle}
-                aria-label="Expand sidebar"
-                title="Expand sidebar"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white"
-              >
-                <PanelLeft size={16} />
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <NetworkBadge />
-                <NonCustodialBadge />
-              </div>
-              <WalletButton full />
-            </>
-          )}
+      {/* Desktop rail */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-line bg-black/20 px-3 py-5 backdrop-blur-xl lg:flex">
+        <div className="mb-6">
+          <Brand />
         </div>
+        <NavRail />
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-white/5 bg-black/50 px-4 py-3 backdrop-blur-xl lg:hidden">
+      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-line bg-black/50 px-4 py-3 backdrop-blur-xl lg:hidden">
         <Brand />
         <div className="flex items-center gap-3">
-          <NetworkBadge className="hidden sm:inline-flex" />
-          {items.map((n) => (
-            <Link
-              key={n.to}
-              to={n.to}
-              className={isActive(n.to) ? 'text-violet-300' : 'text-slate-400'}
-              aria-label={n.label}
-            >
-              <n.icon size={18} />
-            </Link>
-          ))}
           <WalletButton />
+          <button
+            onClick={() => setMobileOpen((o) => !o)}
+            aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+            className="rounded-lg p-1.5 text-slate-300 hover:bg-white/[0.06]"
+          >
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
         </div>
       </header>
 
-      <div
-        className={`relative z-10 transition-[padding] duration-200 ${
-          collapsed ? 'lg:pl-16' : 'lg:pl-60'
-        }`}
-      >
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-30 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden
+          />
+          <div className="absolute inset-y-0 left-0 w-72 border-r border-line bg-[#0c0e16] px-3 py-5">
+            <div className="mb-6">
+              <Brand />
+            </div>
+            <NavRail onNavigate={() => setMobileOpen(false)} />
+          </div>
+        </div>
+      )}
+
+      <div className="relative z-10 lg:pl-60">
         <DemoBanner />
         <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8">{children}</main>
       </div>
