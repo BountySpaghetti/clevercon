@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build:web": "cd apps/web && ../../node_modules/.bin/tsc --noEmit && ../../node_modules/.bin/vite build",
+    "build:web": "npm run build -w @clevercon/agent-sdk && cd apps/web && ../../node_modules/.bin/tsc --noEmit && ../../node_modules/.bin/vite build",
     "setup-wallets": "npx tsx scripts/setup-wallets.ts",
     "fund-testnet-usdc": "npx tsx scripts/fund-testnet-usdc.ts",
     "add-usdc-trustlines": "npx tsx scripts/add-usdc-trustlines.ts",
