@@ -12,4 +12,15 @@ declare module 'snarkjs' {
       publicSignals: string[];
     }>;
   };
+  // Witness calculation, used by the Poseidon oracle to hash with the circuit's
+  // own compiled wasm. `calculate` writes a .wtns; `exportJson` reads it back as
+  // the witness array (index 1 is the circuit's single output).
+  export const wtns: {
+    calculate(
+      input: Record<string, unknown>,
+      wasmPath: string,
+      wtnsPath: string,
+    ): Promise<void>;
+    exportJson(wtnsPath: string): Promise<Array<string | bigint>>;
+  };
 }
