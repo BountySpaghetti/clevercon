@@ -19,7 +19,7 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { isDemo } from '../../config';
-import { getVault } from '../../lib/vault';
+import { getVault, getDelegate } from '../../lib/vault';
 import { getServices } from '../../lib/services';
 import { getPolicies, createPolicy, type Policy } from '../../lib/policies';
 import {
@@ -448,23 +448,66 @@ export function CommandChat() {
         {/* Composer */}
         <div className="mt-4 border-t border-line pt-4">
           {/* Natural language: the agent parses it into a plan you approve. */}
-          <div className="flex gap-2">
-            <input
-              value={nl}
-              onChange={(e) => setNl(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), askAgent())}
-              placeholder="Tell your agent in words, e.g. pay G… $5 for design, or split $9 between two addresses"
-              className={inputCls}
-            />
+          <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
+            Instruct your agent
+          </label>
+          <textarea
+            value={nl}
+            onChange={(e) => setNl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                askAgent();
+              }
+            }}
+            rows={3}
+            placeholder="e.g. Pay GC3F… 420 USDC for design and MEI… 275 for docs. Or: split 900 USDC evenly between these three addresses."
+            className="cc-input mt-1.5 w-full resize-none text-[15px] leading-relaxed"
+          />
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300">
+              <SlidersHorizontal size={13} className="text-violet-300" /> Enforced limit
+            </span>
+            <select
+              value={limitChoice}
+              onChange={(e) => setLimitChoice(e.target.value)}
+              className="cc-input max-w-[17rem] flex-1 !py-1.5 text-sm"
+              aria-label="Limit the vault enforces for this instruction"
+            >
+              <option value="default">
+                {defaultPolicy ? `Default · ${describeSavedLimit(defaultPolicy)}` : 'Budget only'}
+              </option>
+              {policies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.isPrivate ? 'Private' : 'Transparent'} · {describeSavedLimit(p)}
+                </option>
+              ))}
+              {defaultPolicy && <option value="none">No limit (budget only)</option>}
+            </select>
+            <Link to="/app/limits" className="text-xs text-violet-300 hover:text-violet-200">
+              Manage limits
+            </Link>
             <button
               onClick={askAgent}
               disabled={!nl.trim() || planMut.isPending}
-              className={primaryBtn}
+              className={`${primaryBtn} ml-auto`}
             >
-              {planMut.isPending ? 'Thinking…' : 'Ask agent'}
+              {planMut.isPending ? 'Thinking…' : 'Plan it'}
             </button>
           </div>
-          <div className="mb-2 mt-2 text-[11px] uppercase tracking-wider text-slate-600">
+
+          <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-slate-500">
+            <ShieldCheck size={13} className="mt-0.5 shrink-0 text-violet-300" />
+            <span>
+              Your words decide <span className="text-slate-300">what</span> to do; the vault
+              enforces the limit you pick here, on-chain, so the agent can&apos;t overspend or pay
+              outside it no matter what the text says. You approve a checked plan before anything
+              moves.
+            </span>
+          </p>
+
+          <div className="mb-2 mt-4 text-[11px] uppercase tracking-wider text-slate-600">
             or use a quick action
           </div>
 
@@ -813,6 +856,7 @@ function FirstRunGuide() {
   const { data: vault } = useQuery({ queryKey: ['vault'], queryFn: getVault });
   const { data: policies = [] } = useQuery({ queryKey: ['policies'], queryFn: getPolicies });
   const { data: tasks = [] } = useQuery({ queryKey: ['tasks'], queryFn: getTasks });
+  const { data: delegate } = useQuery({ queryKey: ['delegate'], queryFn: getDelegate });
   const [dismissed, setDismissed] = useState(
     () => typeof localStorage !== 'undefined' && localStorage.getItem('cc:home:guide') === 'off',
   );
@@ -822,6 +866,9 @@ function FirstRunGuide() {
   if (isDemo() || dismissed || tasks.length > 0) return null;
 
   const funded = (vault?.balance ?? 0) > 0;
+  // Autopay is only an onboarding step where the server offers automatic
+  // settlement; otherwise the user signs each payment and it does not apply.
+  const autopayOffered = delegate?.settlementEnabled ?? false;
   const steps = [
     {
       done: funded,
@@ -837,10 +884,21 @@ function FirstRunGuide() {
       cta: 'Add a limit',
       to: '/app/limits',
     },
+    ...(autopayOffered
+      ? [
+          {
+            done: !!delegate?.registered,
+            label: 'Enable autopay',
+            desc: 'Authorize your bounded delegate once so jobs settle without a wallet prompt each time. It holds no funds and can never exceed your limits.',
+            cta: 'Enable',
+            to: '/app/vault',
+          },
+        ]
+      : []),
     {
       done: false,
       label: 'Tell your agent what to do',
-      desc: 'Type an instruction below (or pick a quick action). You approve the plan; the vault enforces it.',
+      desc: 'Type an instruction above (or pick a quick action). You approve the plan; the vault enforces the limit you picked.',
       cta: null,
       to: null,
     },

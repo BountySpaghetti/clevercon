@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Plus, X, Lock, Check, ExternalLink, Fingerprint, Cpu, ShieldCheck } from 'lucide-react';
+import {
+  Plus,
+  X,
+  Lock,
+  Check,
+  ExternalLink,
+  Fingerprint,
+  Cpu,
+  ShieldCheck,
+  Layers,
+} from 'lucide-react';
 import { apiPost } from '../../lib/api';
 import {
   createBatchProof,
@@ -15,79 +25,92 @@ import {
 const STROOPS = 10_000_000;
 const WASM = `${DEFAULT_ARTIFACT_BASE_URL}/policy_batch.wasm`;
 const ZKEY = `${DEFAULT_ARTIFACT_BASE_URL}/policy_batch_final.zkey`;
-const MAX_LINES = 4;
+const PROOF_WIDTH = 4; // one Groth16 proof authorizes up to 4 payouts (circuit N=4)
+const MAX_RECIPIENTS = 100; // UI soft cap; larger lists auto-split into proofs of 4
 
 type Line = { payee: string; amount: string };
-type Result = { jobId: string; status: string; total: number; legs: number; commitment: string };
+type Result = { jobIds: string[]; total: number; legs: number; batches: number };
 type Phase = 'idle' | 'proving' | 'relaying' | 'done';
 
 /**
- * pp/2 trustless disburse, entirely client-side: the owner's private policy
- * becomes a Groth16 proof IN THE BROWSER; only the proof is relayed, the chain
- * verifies it before the vault releases funds. One proof authorizes up to four
- * payouts.
+ * pp/2 trustless disburse. The owner's private policy becomes a Groth16 proof IN
+ * THE BROWSER; only the proof is relayed and the chain verifies it before the
+ * vault releases. A proof covers up to {@link PROOF_WIDTH} payouts, so longer
+ * recipient lists are split automatically into one proof per group of four.
  */
 export function DisbursePage() {
   const [ceiling, setCeiling] = useState('10');
   const [lines, setLines] = useState<Line[]>([{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
+  const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
 
   const setLine = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const addLine = () =>
-    setLines((ls) => (ls.length < MAX_LINES ? [...ls, { payee: '', amount: '' }] : ls));
+    setLines((ls) => (ls.length < MAX_RECIPIENTS ? [...ls, { payee: '', amount: '' }] : ls));
   const removeLine = (i: number) => setLines((ls) => ls.filter((_, j) => j !== i));
 
-  const active = lines.filter((l) => l.payee.trim() && Number(l.amount) > 0).slice(0, MAX_LINES);
+  const active = lines
+    .filter((l) => l.payee.trim() && Number(l.amount) > 0)
+    .slice(0, MAX_RECIPIENTS);
   const total = active.reduce((s, l) => s + Number(l.amount), 0);
+  const batches = Math.max(1, Math.ceil(active.length / PROOF_WIDTH));
   const canSubmit = Number(ceiling) > 0 && active.length > 0;
 
   const disburse = useMutation<Result>({
     mutationFn: async () => {
       const over = active.find((l) => Number(l.amount) > Number(ceiling));
       if (over) throw new Error(`each payout must be at or under the ceiling (${ceiling} USDC)`);
-      setPhase('proving');
-      const policy = policyWitnessFromBundle({
-        rules: { perPaymentCeilingUsdc: Number(ceiling) },
-        salt: newSalt(),
-      });
-      const base = Date.now();
-      const releases: BatchRelease[] = active.map((l, i) => ({
-        payeeAddress: l.payee.trim(),
-        amountStroops: String(BigInt(Math.round(Number(l.amount) * STROOPS))),
-        spendCounter: String(base + i),
-      }));
-      const now = Math.floor(Date.now() / 1000);
-      const ctx: BatchContext = {
-        validAfter: String(now - 3600),
-        validBefore: String(now + 86400),
-        runningSpend: '0',
-        priorCount: '0',
-      };
-      const proof = await createBatchProof(policy, releases, ctx, {
-        wasmPath: WASM,
-        zkeyPath: ZKEY,
-      });
-      const sum = releases.reduce((s, r) => s + Number(BigInt(r.amountStroops)) / STROOPS, 0);
-      const request = buildBatchReleaseRequest(proof, releases, ctx, {
-        vaultTaskId: null,
-        planCostUsdc: sum,
-        stepId: base % 1_000_000,
-      });
-      setPhase('relaying');
-      const resp = await apiPost<{ jobId: string; status: string }>(
-        '/vault/batch-release-proved',
-        request,
-      );
+
+      const groups: Line[][] = [];
+      for (let i = 0; i < active.length; i += PROOF_WIDTH)
+        groups.push(active.slice(i, i + PROOF_WIDTH));
+
+      const jobIds: string[] = [];
+      let sum = 0;
+      for (let g = 0; g < groups.length; g++) {
+        setProgress({ i: g + 1, n: groups.length });
+        setPhase('proving');
+        const policy = policyWitnessFromBundle({
+          rules: { perPaymentCeilingUsdc: Number(ceiling) },
+          salt: newSalt(),
+        });
+        const base = Date.now();
+        const releases: BatchRelease[] = groups[g].map((l, i) => ({
+          payeeAddress: l.payee.trim(),
+          amountStroops: String(BigInt(Math.round(Number(l.amount) * STROOPS))),
+          spendCounter: String(base + i),
+        }));
+        const now = Math.floor(Date.now() / 1000);
+        const ctx: BatchContext = {
+          validAfter: String(now - 3600),
+          validBefore: String(now + 86400),
+          runningSpend: '0',
+          priorCount: '0',
+        };
+        const proof = await createBatchProof(policy, releases, ctx, {
+          wasmPath: WASM,
+          zkeyPath: ZKEY,
+        });
+        const gsum = releases.reduce((s, r) => s + Number(BigInt(r.amountStroops)) / STROOPS, 0);
+        sum += gsum;
+        const request = buildBatchReleaseRequest(proof, releases, ctx, {
+          vaultTaskId: null,
+          planCostUsdc: gsum,
+          stepId: (base + g) % 1_000_000,
+        });
+        setPhase('relaying');
+        const resp = await apiPost<{ jobId: string }>('/vault/batch-release-proved', request);
+        jobIds.push(resp.jobId);
+      }
       setPhase('done');
-      return {
-        ...resp,
-        total: sum,
-        legs: releases.length,
-        commitment: proof.commitment.toString('hex'),
-      };
+      setProgress(null);
+      return { jobIds, total: sum, legs: active.length, batches: groups.length };
     },
-    onError: () => setPhase('idle'),
+    onError: () => {
+      setPhase('idle');
+      setProgress(null);
+    },
   });
 
   const busy = disburse.isPending;
@@ -98,21 +121,20 @@ export function DisbursePage() {
       return done || phase === 'relaying' ? 'done' : phase === 'proving' ? 'active' : 'todo';
     return done ? 'done' : phase === 'relaying' ? 'active' : 'todo';
   };
+  const batchNote = progress && progress.n > 1 ? ` · batch ${progress.i} of ${progress.n}` : '';
 
   return (
     <div className="cc-stagger space-y-7">
-      {/* Header */}
       <header>
         <p className="cc-eyebrow">Private payments</p>
         <h1 className="cc-title mt-2">Trustless disburse</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
-          Pay up to four recipients under one zero-knowledge proof. Your spending rule is proven
-          right here in your browser, the server only relays the proof, and the chain enforces it
-          before a cent moves.
+          Pay many recipients under one private spending rule, proven in your browser with
+          zero-knowledge and enforced on-chain. The server only relays the proof; it never sees your
+          rule and cannot forge it.
         </p>
       </header>
 
-      {/* How it works */}
       <div className="grid gap-3 sm:grid-cols-3">
         {[
           {
@@ -123,7 +145,7 @@ export function DisbursePage() {
           {
             ic: Fingerprint,
             t: 'Prove in your browser',
-            d: 'A Groth16 proof; the rule never leaves this device.',
+            d: 'Groth16; the rule never leaves this device.',
           },
           {
             ic: Cpu,
@@ -183,7 +205,7 @@ export function DisbursePage() {
 
             <div className="space-y-2">
               <label className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
-                Recipients (up to {MAX_LINES})
+                Recipients
               </label>
               {lines.map((l, i) => {
                 const overLimit = Number(l.amount) > Number(ceiling) && Number(l.amount) > 0;
@@ -219,7 +241,7 @@ export function DisbursePage() {
                   </div>
                 );
               })}
-              {lines.length < MAX_LINES && (
+              {lines.length < MAX_RECIPIENTS && (
                 <button
                   type="button"
                   onClick={addLine}
@@ -228,6 +250,11 @@ export function DisbursePage() {
                   <Plus size={14} /> Add recipient
                 </button>
               )}
+              <p className="flex items-center gap-1.5 pt-1 text-[11px] text-slate-500">
+                <Layers size={12} className="text-violet-300" />
+                One proof covers {PROOF_WIDTH} payouts; longer lists are proven in {PROOF_WIDTH}
+                -at-a-time batches automatically.
+              </p>
             </div>
 
             <div className="flex items-center justify-between gap-3 border-t border-line pt-4">
@@ -238,13 +265,14 @@ export function DisbursePage() {
                 </span>
                 {active.length > 0 && (
                   <span className="ml-2 text-xs text-slate-600">
-                    · {active.length} payout{active.length > 1 ? 's' : ''}
+                    · {active.length} payout{active.length > 1 ? 's' : ''} · {batches} proof
+                    {batches > 1 ? 's' : ''}
                   </span>
                 )}
               </div>
               <button type="submit" className="cc-btn" disabled={!canSubmit || busy}>
                 <Lock size={15} />
-                {busy ? 'Proving…' : 'Prove & disburse'}
+                {busy ? `Proving…` : 'Prove & disburse'}
               </button>
             </div>
             {disburse.error && (
@@ -276,7 +304,7 @@ export function DisbursePage() {
           <div className="px-5 py-4">
             {[
               {
-                t: 'Witness built in your browser',
+                t: `Witness built in your browser${busy ? batchNote : ''}`,
                 d: 'your policy + a fresh salt, never transmitted',
               },
               { t: 'Zero-knowledge proof generated', d: 'snarkjs over the deployed circuit' },
@@ -325,14 +353,9 @@ export function DisbursePage() {
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-slate-400">
-                  Disbursing to {disburse.data.legs} recipient{disburse.data.legs > 1 ? 's' : ''}.
+                  Disbursing to {disburse.data.legs} recipient{disburse.data.legs > 1 ? 's' : ''}{' '}
+                  across {disburse.data.batches} proof{disburse.data.batches > 1 ? 's' : ''}.
                 </p>
-                <div className="mt-2 text-[11px] text-slate-500">
-                  <div className="mb-0.5 uppercase tracking-wider">Commitment</div>
-                  <div className="break-all font-mono text-slate-400">
-                    {disburse.data.commitment}
-                  </div>
-                </div>
                 <a
                   href="/app/activity"
                   className="mt-2 inline-flex items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
@@ -342,7 +365,8 @@ export function DisbursePage() {
               </div>
             ) : (
               <p className="mt-1 text-[11px] text-slate-500">
-                First proof fetches the circuit (~37MB, cached after). Proving takes a few seconds.
+                First proof fetches the circuit (~37MB, cached after). Each proof takes a few
+                seconds.
               </p>
             )}
           </div>
