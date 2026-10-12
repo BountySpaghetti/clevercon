@@ -30,6 +30,10 @@ export {
   extractBatchOutputs,
   type SorobanProof,
 } from './payments/policy-codec.js';
+export { newSalt, policyWitnessFromBundle } from './payments/policy-bundle.js';
+export type { PolicyBundle, PolicyBundleRules } from './payments/policy-bundle.js';
+export { resolveArtifacts } from './payments/artifacts.js';
+export type { ArtifactSource } from './payments/artifacts.js';
 export { createRegistryClient } from './registry.js';
 export { AgentConfigError } from './config.js';
 export { createProvider, MAX_OUTPUT_CHARS } from './provider.js';

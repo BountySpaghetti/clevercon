@@ -251,13 +251,21 @@ async function main() {
   {
     const policy = await api<{ id: string }>('/policies', {
       body: {
-        rules: { perPaymentCeilingUsdc: DEPOSIT, rollingCapUsdc: DEPOSIT * 3, rollingWindowSecs: 86400 },
+        rules: {
+          perPaymentCeilingUsdc: DEPOSIT,
+          rollingCapUsdc: DEPOSIT * 3,
+          rollingWindowSecs: 86400,
+        },
         isPrivate: false,
       },
       token,
     });
     const pay = await api<{ id: string }>('/payments', {
-      body: { kind: 'pay', lines: [{ payee: faucet.publicKey(), amount: 0.5, reason: 'pp1 pay' }], policyId: policy.id },
+      body: {
+        kind: 'pay',
+        lines: [{ payee: faucet.publicKey(), amount: 0.5, reason: 'pp1 pay' }],
+        policyId: policy.id,
+      },
       token,
     });
     await waitTaskComplete(token, pay.id, 'A) pp1 pay');
@@ -280,7 +288,11 @@ async function main() {
   const faucetBefore = await usdcBalance(faucet.publicKey());
   console.log('  proving (snarkjs, ~60s)...');
   const proof = await createBatchProof(policy, releases, ctx, { wasmPath: WASM, zkeyPath: ZKEY });
-  record('B) client proof generated', !!proof.commitment, `commitment ${proof.commitment.toString('hex').slice(0, 12)}...`);
+  record(
+    'B) client proof generated',
+    !!proof.commitment,
+    `commitment ${proof.commitment.toString('hex').slice(0, 12)}...`,
+  );
 
   const stepId = Math.floor(Date.now() / 1000) % 1_000_000;
   const request = buildBatchReleaseRequest(proof, releases, ctx, {
@@ -322,7 +334,11 @@ async function main() {
       doubled = (await usdcBalance(faucet.publicKey())) - before;
       if (doubled >= 0.5 - 0.001) break;
     }
-    record('C) replay blocked (no double pay)', doubled < 0.5 - 0.001, `payee delta +${doubled.toFixed(4)} USDC`);
+    record(
+      'C) replay blocked (no double pay)',
+      doubled < 0.5 - 0.001,
+      `payee delta +${doubled.toFixed(4)} USDC`,
+    );
   }
 
   // ── D. withdraw whatever is available ────────────────────────────────────────
