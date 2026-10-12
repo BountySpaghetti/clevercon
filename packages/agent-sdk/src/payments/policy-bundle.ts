@@ -12,6 +12,9 @@
  * need a Merkle/commitment input and are left disabled here.
  */
 import type { PolicyWitness } from './batch-prover.js';
+import { payeeField } from './policy-codec.js';
+import { buildAllowlist, windowsRoot, type Allowlist } from './allowlist.js';
+import type { Poseidon } from './poseidon.js';
 
 const STROOPS_PER_USDC = 10_000_000;
 const usdcToStroops = (usdc: number): string => String(BigInt(Math.round(usdc * STROOPS_PER_USDC)));
@@ -23,9 +26,18 @@ export interface PolicyBundleRules {
   /** R2: rolling cap in USDC over `rollingWindowSecs` (both or neither). */
   rollingCapUsdc?: number;
   rollingWindowSecs?: number;
+  /** R3/R5/R8: approved payees, each with an optional per-payee cap + category. */
+  allowlist?: { payeeAddress: string; perPayeeCapUsdc?: number; category?: number }[];
+  /** R4: addresses that may not be paid above `denylistThresholdUsdc` (up to 4). */
+  denylist?: string[];
+  denylistThresholdUsdc?: number;
+  /** R6: up to 2 calendar windows (unix seconds) a release's validity must sit in. */
+  calendarWindows?: { startUnix: number; endUnix: number }[];
   /** R7: max number of releases over `velocityWindowSecs` (both or neither). */
   maxReleasesPerWindow?: number;
   velocityWindowSecs?: number;
+  /** R8: per-category ceilings in USDC (up to 4; index = category). */
+  categoryCeilingsUsdc?: number[];
 }
 
 /** The owner's private policy: rules + the secret salt that pins the commitment. */
@@ -88,4 +100,68 @@ export function policyWitnessFromBundle(bundle: PolicyBundle): PolicyWitness {
     r8CatCeilings: ['0', '0', '0', '0'],
     disclosureTag: '0',
   };
+}
+
+/**
+ * Build the FULL circuit witness for a bundle, including the rules that need
+ * Poseidon (R3 allowlist, R5 per-payee cap, R6 calendar, R8 category), using the
+ * oracle so JS-built roots match the circuit. Returns the policy witness plus the
+ * built {@link Allowlist} (so the caller can attach `membership(payee)` to each
+ * release). R1/R2/R4/R7 are field-only and need no Poseidon.
+ */
+export async function buildPolicyWitness(
+  bundle: PolicyBundle,
+  poseidon: Poseidon,
+): Promise<{ policy: PolicyWitness; allowlist?: Allowlist }> {
+  const r = bundle.rules;
+  const policy = policyWitnessFromBundle(bundle); // R1/R2/R7 + defaults
+  const enabled = [...policy.enabled];
+  let allowlist: Allowlist | undefined;
+
+  // R3 allowlist (+ R5 per-payee cap, R8 category, which ride the leaf).
+  if (r.allowlist && r.allowlist.length) {
+    allowlist = await buildAllowlist(
+      r.allowlist.map((e) => ({
+        payeeAddress: e.payeeAddress,
+        capStroops: e.perPayeeCapUsdc != null ? usdcToStroops(e.perPayeeCapUsdc) : '0',
+        category: e.category ?? 0,
+      })),
+      poseidon,
+    );
+    policy.r3Root = allowlist.root;
+    enabled[2] = true; // R3
+    if (r.allowlist.some((e) => e.perPayeeCapUsdc != null)) enabled[4] = true; // R5
+    if (r.categoryCeilingsUsdc && r.categoryCeilingsUsdc.length) {
+      const cats = ['0', '0', '0', '0'];
+      r.categoryCeilingsUsdc.slice(0, 4).forEach((c, i) => (cats[i] = usdcToStroops(c)));
+      policy.r8CatCeilings = cats;
+      enabled[7] = true; // R8
+    }
+  }
+
+  // R4 deny-list: compare each payee field against up to four forbidden fields.
+  if (r.denylist && r.denylist.length) {
+    const entries = r.denylist
+      .slice(0, 4)
+      .map((a) => BigInt('0x' + payeeField(a).toString('hex')).toString());
+    while (entries.length < 4) entries.push('0');
+    policy.r4Entries = entries;
+    policy.r4Threshold =
+      r.denylistThresholdUsdc != null ? usdcToStroops(r.denylistThresholdUsdc) : '0';
+    enabled[3] = true; // R4
+  }
+
+  // R6 calendar windows: the release validity window must sit inside one of them.
+  if (r.calendarWindows && r.calendarWindows.length) {
+    const wins = [
+      r.calendarWindows[0] ?? { startUnix: 0, endUnix: 0 },
+      r.calendarWindows[1] ?? { startUnix: 0, endUnix: 0 },
+    ].map((w) => ({ start: String(w.startUnix), end: String(w.endUnix) }));
+    policy.r6Windows = wins;
+    policy.r6WindowsRoot = await windowsRoot(wins, poseidon);
+    enabled[5] = true; // R6
+  }
+
+  policy.enabled = enabled;
+  return { policy, allowlist };
 }

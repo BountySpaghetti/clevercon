@@ -30,7 +30,7 @@ export {
   extractBatchOutputs,
   type SorobanProof,
 } from './payments/policy-codec.js';
-export { newSalt, policyWitnessFromBundle } from './payments/policy-bundle.js';
+export { newSalt, policyWitnessFromBundle, buildPolicyWitness } from './payments/policy-bundle.js';
 export type { PolicyBundle, PolicyBundleRules } from './payments/policy-bundle.js';
 export { resolveArtifacts, DEFAULT_ARTIFACT_BASE_URL } from './payments/artifacts.js';
 export type { ArtifactSource } from './payments/artifacts.js';
