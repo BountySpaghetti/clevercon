@@ -294,6 +294,15 @@ body {
   box-shadow: 0 0 0 3px var(--violet-soft);
 }
 
+/* Native <select> option popup. A custom (semi-transparent) select background makes
+   Chromium draw the option list white and ignore color-scheme, so force the options
+   opaque-dark to match the theme. */
+option,
+optgroup {
+  background-color: #141620;
+  color: #e7e9ee;
+}
+
 /* Pills */
 .cc-pill {
   display: inline-flex;

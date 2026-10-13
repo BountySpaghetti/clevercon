@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -148,17 +148,24 @@ function draftFromSuggested(l: {
 // below; 'none' = budget-only; otherwise a saved limit's id.
 type LimitChoice = 'default' | 'custom' | 'none' | string;
 
+const AGENT_INTRO =
+  "I'm your spending agent. Tell me what to do with your budget, or use a quick action. I'll propose a plan and you approve before anything moves. The vault enforces the limit you pick, so I can never overspend or pay outside your rules.";
+
 export function CommandChat() {
   const qc = useQueryClient();
   const idRef = useRef(2);
   const nextId = () => idRef.current++;
-  const [messages, setMessages] = useState<Msg[]>([
-    {
-      id: 1,
-      role: 'agent',
-      text: "I'm your spending agent. Tell me what to do with your budget, or use a quick action. I'll propose a plan and you approve before anything moves. The vault enforces the limit you pick, so I can never overspend or pay outside your rules.",
-    },
-  ]);
+  const [messages, setMessages] = useState<Msg[]>([{ id: 1, role: 'agent', text: AGENT_INTRO }]);
+  // Keep the conversation scrolled to the newest message (it sits below the composer).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+  function clearChat() {
+    idRef.current = 2;
+    setMessages([{ id: 1, role: 'agent', text: AGENT_INTRO }]);
+  }
 
   const [action, setAction] = useState<'pay' | 'disburse' | 'hire' | null>(null);
   const [payee, setPayee] = useState('');
@@ -485,21 +492,37 @@ export function CommandChat() {
         title="Tell your agent what to do"
         hint="It proposes a plan; you approve; the vault enforces the limit you pick"
       />
-      <div className="p-5">
-        {/* Transcript */}
-        <div className="max-h-[22rem] space-y-3 overflow-y-auto pr-1">
-          {messages.map((m) => (
-            <ChatBubble
-              key={m.id}
-              msg={m}
-              onApprove={approve}
-              onCancel={(id) => setPlanStatus(id, 'cancelled')}
-            />
-          ))}
+      <div className="flex flex-col p-5">
+        {/* Conversation — rendered below the composer (order-2) so the input is the
+            first thing on the page; scrolls to the newest and can be cleared. */}
+        <div className="order-2 mt-5 border-t border-line pt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">
+              Conversation
+            </span>
+            {messages.length > 1 && (
+              <button
+                onClick={clearChat}
+                className="inline-flex items-center gap-1 text-[11px] text-slate-500 transition-colors hover:text-slate-300"
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
+          </div>
+          <div ref={scrollRef} className="max-h-[20rem] space-y-3 overflow-y-auto pr-1">
+            {messages.map((m) => (
+              <ChatBubble
+                key={m.id}
+                msg={m}
+                onApprove={approve}
+                onCancel={(id) => setPlanStatus(id, 'cancelled')}
+              />
+            ))}
+          </div>
         </div>
 
-        {/* Composer */}
-        <div className="mt-4 border-t border-line pt-4">
+        {/* Composer (order-1 = top) */}
+        <div className="order-1">
           {/* Natural language: the agent parses it into a plan. The instruction
               bar is the focal hero of this page, so give it an accented panel. */}
           <div className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">

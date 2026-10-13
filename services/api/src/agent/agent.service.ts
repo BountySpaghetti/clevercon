@@ -407,10 +407,18 @@ export class AgentService {
 }
 
 // ── Deterministic fallback (no API key) ───────────────────────────────────────
+// A small, safe grammar so the agent still works without an LLM provider. The full
+// natural-language planner (any phrasing) kicks in once ANTHROPIC_API_KEY or
+// OPENAI_API_KEY is set on the API.
 const PAY_RE =
   /(?:pay|send)\s+\$?([0-9]+(?:\.[0-9]+)?)\s*(?:usdc)?\s+to\s+(G[A-Z2-7]{55})(?:\s+for\s+(.+))?/i;
+/** "...<amount> each..." for an equal-amount disbursement. */
+const EACH_RE = /(?:pay|send|disburse|give)\s+\$?([0-9]+(?:\.[0-9]+)?)\s*(?:usdc)?\s+each/i;
+/** Every Stellar address mentioned. */
+const ADDR_RE = /G[A-Z2-7]{55}/g;
 
 function fallbackParse(instruction: string): { plan: RawPlan; source: AgentPlan['source'] } {
+  // "pay 5 to G… for X" — a single direct payment.
   const m = PAY_RE.exec(instruction);
   if (m) {
     return {
@@ -424,6 +432,24 @@ function fallbackParse(instruction: string): { plan: RawPlan; source: AgentPlan[
       },
     };
   }
+
+  // "send 1 usdc each to these wallets: G…, G…, G…" — equal-amount disbursement.
+  const each = EACH_RE.exec(instruction);
+  const addrs = [...new Set(instruction.match(ADDR_RE) ?? [])];
+  if (each && addrs.length >= 1) {
+    const amount = Number(each[1]);
+    return {
+      source: 'fallback',
+      plan: {
+        kind: 'disburse',
+        lines: addrs.map((payee) => ({ payee, amount, reason: '' })),
+        serviceQuery: '',
+        budget: 0,
+        rationale: `Parsed a disbursement of ${amount} USDC each to ${addrs.length} recipient${addrs.length > 1 ? 's' : ''}.`,
+      },
+    };
+  }
+
   return {
     source: 'fallback',
     plan: {
@@ -432,7 +458,7 @@ function fallbackParse(instruction: string): { plan: RawPlan; source: AgentPlan[
       serviceQuery: '',
       budget: 0,
       rationale:
-        'I could not parse that without the AI planner. Configure an LLM provider (ANTHROPIC_API_KEY or OPENAI_API_KEY), or use the Pay / Disburse / Hire actions.',
+        'I couldn’t read that. Use the Pay, Disburse, or Hire buttons below, or phrase it simply, like "pay 5 to G… for data" or "send 1 each to G…, G…, G…".',
     },
   };
 }
