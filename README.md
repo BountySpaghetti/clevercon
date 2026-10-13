@@ -9,6 +9,8 @@ A private, non-custodial spending account for AI agents on Stellar, and an econo
 [![CI](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml/badge.svg)](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Stellar](https://img.shields.io/badge/Built%20on-Stellar-7B2FFF)](https://stellar.org)
+[![npm: agent-sdk](https://img.shields.io/npm/v/@clevercon/agent-sdk?label=%40clevercon%2Fagent-sdk&color=CB3837&logo=npm)](https://www.npmjs.com/package/@clevercon/agent-sdk)
+[![npm: mcp](https://img.shields.io/npm/v/@clevercon/mcp?label=%40clevercon%2Fmcp&color=CB3837&logo=npm)](https://www.npmjs.com/package/@clevercon/mcp)
 
 [Website](https://clevercon.xyz) · [Architecture](docs/architecture.md) · [Private policies](docs/private-policies-v2.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
@@ -59,8 +61,8 @@ Two kinds of conditions: **spending bounds** (caps, allowlist, budget, time wind
 ## Three doors
 
 - **Web app** ([clevercon.xyz](https://clevercon.xyz)): connect a wallet, fund the vault, build a private policy, instruct an agent in plain language, disburse to many, and watch releases settle, with the proof generated in your browser.
-- **SDK** (`@clevercon/agent-sdk`): `createSpender` for a bounded spending account, `createAgentWallet` for the external x402 economy, and `createProvider` / `createAgent` to be a paid service. See [packages/agent-sdk](packages/agent-sdk).
-- **MCP server** (`@clevercon/mcp`): give any MCP-capable agent a spending account, it can pay, disburse, hire, set limits, and read its budget on the live rail. See [packages/mcp](packages/mcp).
+- **SDK** ([`@clevercon/agent-sdk`](https://www.npmjs.com/package/@clevercon/agent-sdk)): `createSpender` for a bounded spending account, `createAgentWallet` for the external x402 economy, and `createProvider` / `createAgent` to be a paid service. `npm install @clevercon/agent-sdk` · [docs](packages/agent-sdk).
+- **MCP server** ([`@clevercon/mcp`](https://www.npmjs.com/package/@clevercon/mcp)): give any MCP-capable agent a spending account, it can pay, disburse, hire, set limits, and read its budget on the live rail. `npm install @clevercon/mcp` · [docs](packages/mcp).
 
 ## What makes it different
 

@@ -12,6 +12,10 @@ import {
   Terminal,
   Menu,
   X,
+  ChevronsLeft,
+  ChevronsRight,
+  Wallet,
+  LogOut,
 } from 'lucide-react';
 import { useSession, type Role } from '../store/session';
 import { useWalletAuth } from '../auth/useWalletAuth';
@@ -55,13 +59,15 @@ const CONSOLES: { to: string; label: string; role: Role; icon: Icon; selfServe?:
   { to: '/admin', label: 'Admin', role: 'ADMIN', icon: ShieldCheck },
 ];
 
-function Brand() {
+function Brand({ collapsed = false }: { collapsed?: boolean }) {
   return (
-    <Link to="/" className="flex items-center gap-2.5 px-2">
-      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-700 shadow-lg shadow-violet-900/40">
+    <Link to="/" className={`flex items-center gap-2.5 ${collapsed ? 'px-0' : 'px-2'}`} title="CleverCon">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-700 shadow-lg shadow-violet-900/40">
         <Layers size={16} className="text-white" />
       </span>
-      <span className="text-[15px] font-bold tracking-tight text-white">CleverCon</span>
+      {!collapsed && (
+        <span className="text-[15px] font-bold tracking-tight text-white">CleverCon</span>
+      )}
     </Link>
   );
 }
@@ -89,9 +95,30 @@ function NonCustodialBadge() {
   );
 }
 
-function WalletButton({ full = false }: { full?: boolean }) {
+function WalletButton({ full = false, collapsed = false }: { full?: boolean; collapsed?: boolean }) {
   const session = useSession((s) => s.session);
   const { disconnect } = useWalletAuth();
+  if (collapsed) {
+    return session ? (
+      <button
+        onClick={disconnect}
+        title={`${session.address} · Disconnect`}
+        aria-label="Disconnect wallet"
+        className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl border border-line-strong bg-white/[0.03] text-slate-300 transition-colors hover:bg-white/[0.07]"
+      >
+        <LogOut size={15} />
+      </button>
+    ) : (
+      <Link
+        to="/connect"
+        title="Connect wallet"
+        aria-label="Connect wallet"
+        className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white"
+      >
+        <Wallet size={15} />
+      </Link>
+    );
+  }
   if (session) {
     return (
       <button
@@ -114,7 +141,7 @@ function WalletButton({ full = false }: { full?: boolean }) {
   );
 }
 
-function NavRail({ onNavigate }: { onNavigate?: () => void }) {
+function NavRail({ onNavigate, collapsed = false }: { onNavigate?: () => void; collapsed?: boolean }) {
   const session = useSession((s) => s.session);
   const loc = useLocation();
   const roles = session?.roles ?? [];
@@ -138,33 +165,43 @@ function NavRail({ onNavigate }: { onNavigate?: () => void }) {
       <Link
         to={to}
         onClick={onNavigate}
-        className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
+        title={collapsed ? label : undefined}
+        className={`flex items-center rounded-xl py-2.5 text-[13.5px] font-medium transition-colors ${
+          collapsed ? 'justify-center px-0' : 'gap-3 px-3'
+        } ${
           active
             ? 'bg-violet-500/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(139,124,255,0.25)]'
             : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
         }`}
       >
         <I size={17} className={active ? 'text-violet-300' : ''} />
-        {label}
+        {!collapsed && label}
       </Link>
     );
   };
 
+  const SectionLabel = ({ children }: { children: ReactNode }) =>
+    collapsed ? (
+      <div className="mx-auto my-2 h-px w-6 bg-white/10" />
+    ) : (
+      <div className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+        {children}
+      </div>
+    );
+
   return (
     <div className="flex h-full flex-col gap-1">
-      <div className="px-3 pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
-        Console
-      </div>
+      <SectionLabel>Console</SectionLabel>
       {session ? (
         PRIMARY.map((n) => <Item key={n.to} {...n} />)
-      ) : (
+      ) : collapsed ? null : (
         <p className="px-3 text-xs text-slate-600">Connect a wallet to begin.</p>
       )}
 
       {consoles.length > 0 && (
         <>
-          <div className="px-3 pb-2 pt-5 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
-            Switch
+          <div className={collapsed ? '' : 'pt-4'}>
+            <SectionLabel>Switch</SectionLabel>
           </div>
           {consoles.map((n) => (
             <Item key={n.to} {...n} />
@@ -173,11 +210,13 @@ function NavRail({ onNavigate }: { onNavigate?: () => void }) {
       )}
 
       <div className="mt-auto flex flex-col gap-3 pt-6">
-        <div className="flex flex-wrap gap-2 px-1">
-          <NetworkBadge />
-          <NonCustodialBadge />
-        </div>
-        <WalletButton full />
+        {!collapsed && (
+          <div className="flex flex-wrap gap-2 px-1">
+            <NetworkBadge />
+            <NonCustodialBadge />
+          </div>
+        )}
+        <WalletButton full={!collapsed} collapsed={collapsed} />
       </div>
     </div>
   );
@@ -186,6 +225,23 @@ function NavRail({ onNavigate }: { onNavigate?: () => void }) {
 export function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('cc:railCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleCollapsed = () =>
+    setCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem('cc:railCollapsed', next ? '1' : '0');
+      } catch {
+        // ignore
+      }
+      return next;
+    });
 
   // The landing page is a full-bleed marketing page with its own chrome.
   if (loc.pathname === '/') return <>{children}</>;
@@ -195,11 +251,23 @@ export function Shell({ children }: { children: ReactNode }) {
       <div className="app-ambient" aria-hidden />
 
       {/* Desktop rail */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-line bg-black/20 px-3 py-5 backdrop-blur-xl lg:flex">
-        <div className="mb-6">
-          <Brand />
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 hidden flex-col border-r border-line bg-black/20 py-5 backdrop-blur-xl transition-[width] duration-200 lg:flex ${
+          collapsed ? 'w-16 px-2' : 'w-60 px-3'
+        }`}
+      >
+        <div className={`mb-6 flex items-center ${collapsed ? 'flex-col gap-3' : 'justify-between'}`}>
+          <Brand collapsed={collapsed} />
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-white"
+          >
+            {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+          </button>
         </div>
-        <NavRail />
+        <NavRail collapsed={collapsed} />
       </aside>
 
       {/* Mobile top bar */}
@@ -234,7 +302,9 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <div className="relative z-10 lg:pl-60">
+      <div
+        className={`relative z-10 transition-[padding] duration-200 ${collapsed ? 'lg:pl-16' : 'lg:pl-60'}`}
+      >
         <DemoBanner />
         <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8">{children}</main>
       </div>

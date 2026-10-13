@@ -220,16 +220,21 @@ export function DisbursePage() {
                       className={`cc-input min-w-0 flex-1 font-mono text-xs ${offList ? '!border-amber-500/60' : ''}`}
                       aria-label={`Payee ${i + 1} address`}
                     />
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="USDC"
-                      value={l.amount}
-                      onChange={(e) => setLine(i, { amount: e.target.value })}
-                      className={`cc-input cc-num w-24 ${overLimit ? '!border-amber-500/60' : ''}`}
-                      aria-label={`Payee ${i + 1} amount`}
-                    />
+                    <div className="relative shrink-0" style={{ width: '7.5rem' }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Amount"
+                        value={l.amount}
+                        onChange={(e) => setLine(i, { amount: e.target.value })}
+                        className={`cc-input cc-num pr-11 ${overLimit ? '!border-amber-500/60' : ''}`}
+                        aria-label={`Payee ${i + 1} amount in USDC`}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-500">
+                        USDC
+                      </span>
+                    </div>
                     {lines.length > 1 && (
                       <button
                         type="button"

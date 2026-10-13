@@ -136,7 +136,14 @@ const USAGE_MODES = [
 ];
 
 type OfferStatus = 'live' | 'dev' | 'planned';
-const OFFERINGS: { icon: typeof Wallet; name: string; status: OfferStatus; body: string }[] = [
+const OFFERINGS: {
+  icon: typeof Wallet;
+  name: string;
+  status: OfferStatus;
+  body: string;
+  href?: string;
+  hrefLabel?: string;
+}[] = [
   {
     icon: Wallet,
     name: 'Non-custodial vault',
@@ -160,12 +167,16 @@ const OFFERINGS: { icon: typeof Wallet; name: string; status: OfferStatus; body:
     name: 'Agent SDK',
     status: 'live',
     body: 'Embed a bounded spending account, or agent-key mode for external x402 services, into any app or agent in a few lines.',
+    href: 'https://www.npmjs.com/package/@clevercon/agent-sdk',
+    hrefLabel: 'npm install @clevercon/agent-sdk',
   },
   {
     icon: Layers,
     name: 'Stellar MCP server',
     status: 'live',
     body: 'Give any MCP-capable agent a bounded spending account: pay, disburse, hire, set limits, and read its budget, natively over MCP.',
+    href: 'https://www.npmjs.com/package/@clevercon/mcp',
+    hrefLabel: 'npm install @clevercon/mcp',
   },
   {
     icon: Zap,
@@ -477,6 +488,17 @@ export function Landing() {
                     </div>
                     <h3 className="mt-4 text-base font-semibold text-white">{o.name}</h3>
                     <p className="mt-1.5 text-sm text-slate-400 leading-relaxed">{o.body}</p>
+                    {o.href && (
+                      <a
+                        href={o.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1 font-mono text-[11px] text-slate-300 transition-colors hover:border-white/20 hover:text-white"
+                      >
+                        {o.hrefLabel ?? 'View on npm'}
+                        <ArrowRight size={11} />
+                      </a>
+                    )}
                   </div>
                 </Reveal>
               );
