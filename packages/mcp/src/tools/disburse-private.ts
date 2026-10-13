@@ -12,20 +12,23 @@
  * and the circuit artifacts via CLEVERCON_PP2_WASM / _ZKEY (paths) or _URL (urls).
  */
 import { readFileSync } from 'node:fs';
+// Import from the light subpaths, NOT the package index: the index pulls in the
+// agent/provider/express/x402/mpp chain (~11s cold load) and would make the MCP
+// server appear to hang on boot. /prover + /artifacts carry only what we need.
 import {
   createBatchProof,
   buildBatchReleaseRequest,
   policyWitnessFromBundle,
   buildPolicyWitness,
   makePoseidon,
-  resolveArtifacts,
   DEFAULT_POSEIDON_ARTIFACTS,
   type PolicyBundle,
   type PolicyWitness,
   type BatchRelease,
   type BatchContext,
   type Allowlist,
-} from '@clevercon/agent-sdk';
+} from '@clevercon/agent-sdk/prover';
+import { resolveArtifacts } from '@clevercon/agent-sdk/artifacts';
 import {
   createApiClient,
   toolJson,

@@ -1,6 +1,6 @@
 {
   "name": "@clevercon/agent-sdk",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Give an AI agent a private, non-custodial spending account on Stellar: pay, disburse, hire and pay services (x402/MPP), or be a paid service, all within policy.",
   "license": "MIT",
   "type": "module",
@@ -22,6 +22,26 @@
     "./prover": {
       "types": "./dist/prover.d.ts",
       "default": "./dist/prover.js"
+    },
+    "./artifacts": {
+      "types": "./dist/payments/artifacts.d.ts",
+      "default": "./dist/payments/artifacts.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "prover": [
+        "./dist/prover.d.ts"
+      ],
+      "artifacts": [
+        "./dist/payments/artifacts.d.ts"
+      ],
+      "provider": [
+        "./dist/provider.d.ts"
+      ],
+      "spender": [
+        "./dist/spender.d.ts"
+      ]
     }
   },
   "files": [
@@ -44,6 +64,7 @@
     "@x402/express": "^2.8.0",
     "@x402/fetch": "^2.8.0",
     "@x402/stellar": "^2.8.0",
+    "circom_runtime": "^0.1.28",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
     "express": "^4.18.0",
