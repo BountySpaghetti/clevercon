@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clevercon/agent-sdk": "^0.2.0",
+    "@clevercon/agent-sdk": "*",
     "@creit.tech/stellar-wallets-kit": "^1.4.1",
     "@stellar/stellar-sdk": "14.6.1",
     "@tanstack/react-query": "^5.62.0",
