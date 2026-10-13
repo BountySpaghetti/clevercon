@@ -1,4 +1,13 @@
-import { Keypair, nativeToScVal, Address, xdr } from '@stellar/stellar-sdk';
+import {
+  Keypair,
+  nativeToScVal,
+  Address,
+  xdr,
+  Contract,
+  TransactionBuilder,
+  scValToNative,
+  rpc as SorobanRpc,
+} from '@stellar/stellar-sdk';
 import {
   PaymentMethod,
   PaymentStatus,
@@ -460,23 +469,60 @@ export async function settleBatch(
   try {
     const txHash = await withDelegate(delegateKp.publicKey(), async () => {
       let vaultTaskId = payload.vaultTaskId ? BigInt(payload.vaultTaskId) : null;
+      let lockedHere = false;
       if (vaultTaskId === null) {
         vaultTaskId = await createTaskWithPolicyOnChain(
           delegateKp,
           payload.planCostUsdc,
           payload.commitmentHex,
         );
+        lockedHere = true;
       }
-      return releasePaymentProvedBatch(delegateKp, {
-        taskId: vaultTaskId,
-        stepId: BigInt(payload.stepId),
-        payees: payload.payees,
-        amountsStroops: payload.amountsStroops.map((a) => BigInt(a)),
-        nullifiers: payload.nullifiers.map((n) => Buffer.from(n, 'hex')),
-        validAfter: BigInt(payload.validAfter),
-        validBefore: BigInt(payload.validBefore),
-        proof,
-      });
+      try {
+        const hash = await releasePaymentProvedBatch(delegateKp, {
+          taskId: vaultTaskId,
+          stepId: BigInt(payload.stepId),
+          payees: payload.payees,
+          amountsStroops: payload.amountsStroops.map((a) => BigInt(a)),
+          nullifiers: payload.nullifiers.map((n) => Buffer.from(n, 'hex')),
+          validAfter: BigInt(payload.validAfter),
+          validBefore: BigInt(payload.validBefore),
+          proof,
+        });
+        // A pp/2 batch owns its whole on-chain task and spends the full plan_cost in
+        // this single release, so finalize NOW to unlock the budget: the vault only
+        // frees `locked` in complete_task. Without this, every disburse strands its
+        // locked budget. Best-effort: the funds already moved, so a failed finalize
+        // just leaves the lock for the recovery sweep.
+        try {
+          await completeTaskOnChain(delegateKp, vaultTaskId);
+        } catch (finErr) {
+          logger.warn(
+            { vaultTaskId: String(vaultTaskId), err: String(finErr) },
+            'post-release complete_task failed; budget stays locked until re-finalized',
+          );
+        }
+        return hash;
+      } catch (releaseErr) {
+        // The lock succeeded but the release did not. Roll the lock back so the
+        // budget is never stranded; the job is then marked non-retryable so a retry
+        // can never create a second lock for the same disbursement.
+        if (lockedHere) {
+          try {
+            await completeTaskOnChain(delegateKp, vaultTaskId);
+            logger.info(
+              { vaultTaskId: String(vaultTaskId) },
+              'rolled back batch lock after release failure',
+            );
+          } catch (rbErr) {
+            logger.error(
+              { vaultTaskId: String(vaultTaskId), err: String(rbErr) },
+              'rollback complete_task failed; budget may remain locked (recoverable via sweep)',
+            );
+          }
+        }
+        throw releaseErr;
+      }
     });
     logger.info(
       { buyerId: payload.buyerId, txHash, legs: payload.payees.length },
@@ -486,12 +532,10 @@ export async function settleBatch(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.error({ buyerId: payload.buyerId, err: reason }, 'batch settlement failed');
-    return {
-      status: 'failed',
-      reason,
-      buyerId: payload.buyerId,
-      retryable: !isDeterministicChainError(reason),
-    };
+    // We roll back the lock on failure, so this is non-retryable on purpose: a
+    // retry would lock a fresh task (vaultTaskId is null) and double-reserve the
+    // budget. The owner re-submits a new proof instead.
+    return { status: 'failed', reason, buyerId: payload.buyerId, retryable: false };
   }
 }
 
@@ -509,7 +553,7 @@ function contractErrorCode(msg: string): number | null {
 }
 
 /** Sign `complete_task` with the buyer's delegate and submit; tolerant of re-calls. */
-async function completeTaskOnChain(
+export async function completeTaskOnChain(
   kp: Keypair,
   taskId: bigint,
 ): Promise<'completed' | 'already' | 'disputed'> {
@@ -602,4 +646,82 @@ export async function finalizeTaskIfComplete(
     'task finalized on-chain (budget unlocked)',
   );
   return { status: outcome === 'already' ? 'already' : 'finalized', mode: task.mode };
+}
+
+// ── Recovery: unlock orphan batch-disburse locks ──────────────────────────────
+// Each pp/2 batch locks an on-chain task that has no DB Task row. Before the
+// finalize-on-settle fix above, those locks were never freed, so a disburse could
+// leave its budget permanently `locked`. This sweeps a user's on-chain tasks and
+// completes any still locked AND untracked by a DB Task (the orphan batch locks),
+// returning the budget to `available`.
+
+/** Read a vault view function via simulation (no signature moves funds). */
+async function simulateVaultRead(
+  kp: Keypair,
+  method: string,
+  args: xdr.ScVal[],
+): Promise<xdr.ScVal | null> {
+  const opts = sorobanOpts();
+  const server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
+  const account = await server.getAccount(kp.publicKey());
+  const tx = new TransactionBuilder(account, { fee: '1000', networkPassphrase: opts.passphrase })
+    .addOperation(new Contract(opts.contractId).call(method, ...args))
+    .setTimeout(30)
+    .build();
+  const sim = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(sim)) throw new Error(`simulate ${method}: ${sim.error}`);
+  return sim.result?.retval ?? null;
+}
+
+/**
+ * Unlock a user's stranded batch-disburse locks. Finds the user's on-chain tasks
+ * that are still locked and NOT tracked by a DB Task, and completes them to return
+ * the budget. Idempotent (complete_task tolerates re-calls). Runs with the user's
+ * delegate, so it must run where DELEGATE_ENCRYPTION_KEY is configured.
+ */
+export async function recoverOrphanLocks(
+  prisma: PrismaClient,
+  userId: string,
+): Promise<{ unlocked: string[]; skipped: number }> {
+  if (!settlementConfigured()) throw new Error('settlement not configured');
+  const delegate = await prisma.agentDelegate.findUnique({ where: { userId } });
+  if (!delegate) throw new Error('user has no delegate');
+  const kp = Keypair.fromSecret(decryptSecret(delegate.secretCipher));
+  const wallets = await prisma.wallet.findMany({ where: { userId }, select: { address: true } });
+
+  const unlocked: string[] = [];
+  let skipped = 0;
+  for (const w of wallets) {
+    const idsVal = await simulateVaultRead(kp, 'get_user_tasks', [new Address(w.address).toScVal()]);
+    const rawIds = idsVal ? (scValToNative(idsVal) as (bigint | number)[]) : [];
+    for (const raw of rawIds) {
+      const id = BigInt(raw);
+      const taskVal = await simulateVaultRead(kp, 'get_task', [nativeToScVal(id, { type: 'u64' })]);
+      const task = taskVal ? (scValToNative(taskVal) as Record<string, unknown> | null) : null;
+      if (!task || task.completed === true) {
+        skipped++;
+        continue;
+      }
+      // Only orphan batch locks: a DB-tracked task finalizes via
+      // finalizeTaskIfComplete and may still be mid-flight, so never touch it here.
+      const dbTask = await prisma.task.findFirst({ where: { vaultTaskId: id } });
+      if (dbTask) {
+        skipped++;
+        continue;
+      }
+      try {
+        const outcome = await withDelegate(kp.publicKey(), () => completeTaskOnChain(kp, id));
+        if (outcome === 'disputed') {
+          skipped++;
+          continue;
+        }
+        unlocked.push(id.toString());
+        logger.info({ userId, taskId: String(id), outcome }, 'recovered orphan locked task');
+      } catch (e) {
+        skipped++;
+        logger.error({ userId, taskId: String(id), err: String(e) }, 'recover complete_task failed');
+      }
+    }
+  }
+  return { unlocked, skipped };
 }
