@@ -11,30 +11,10 @@ import {
   ShieldCheck,
   Layers,
 } from 'lucide-react';
-import { apiPost } from '../../lib/api';
 import { getPolicies } from '../../lib/policies';
 import { describeSavedLimit, savedLimitBundleRules } from './limits-model';
-import {
-  createBatchProof,
-  policyWitnessFromBundle,
-  buildPolicyWitness,
-  makePoseidon,
-  newSalt,
-  buildBatchReleaseRequest,
-  DEFAULT_ARTIFACT_BASE_URL,
-  DEFAULT_POSEIDON_ARTIFACTS,
-  type BatchRelease,
-  type BatchContext,
-  type Allowlist,
-  type PolicyWitness,
-  type PolicyBundleRules,
-} from '@clevercon/agent-sdk/prover';
-
-const STROOPS = 10_000_000;
-const WASM = `${DEFAULT_ARTIFACT_BASE_URL}/policy_batch.wasm`;
-const ZKEY = `${DEFAULT_ARTIFACT_BASE_URL}/policy_batch_final.zkey`;
-const PROOF_WIDTH = 4; // one Groth16 proof authorizes up to 4 payouts (circuit N=4)
-const MAX_RECIPIENTS = 100; // UI soft cap; larger lists auto-split into proofs of 4
+import { proveAndReleaseBatch, PROOF_WIDTH, MAX_RECIPIENTS } from '../../lib/prove';
+import type { PolicyBundleRules } from '@clevercon/agent-sdk/prover';
 
 type Line = { payee: string; amount: string };
 type Result = { jobIds: string[]; total: number; legs: number; batches: number };
@@ -78,80 +58,21 @@ export function DisbursePage() {
   const canSubmit = Number(ceiling) > 0 && active.length > 0 && offAllowlist.length === 0;
 
   const disburse = useMutation<Result>({
-    mutationFn: async () => {
-      const over = active.find((l) => Number(l.amount) > Number(ceiling));
-      if (over) throw new Error(`each payout must be at or under the ceiling (${ceiling} USDC)`);
-
-      // The rules proven on-chain: the ceiling (always) plus whatever the picked
-      // saved limit carries (allowlist, rolling cap, deny-list). A bare ceiling is
-      // field-only; an allowlist pulls in the Poseidon oracle for the Merkle root.
-      const bundleRules: PolicyBundleRules = savedBundle
-        ? { ...savedBundle, perPaymentCeilingUsdc: Number(ceiling) }
-        : { perPaymentCeilingUsdc: Number(ceiling) };
-      const needsFull = !!(
-        bundleRules.allowlist?.length ||
-        bundleRules.denylist?.length ||
-        bundleRules.calendarWindows?.length ||
-        bundleRules.categoryCeilingsUsdc?.length
-      );
-      const poseidon = needsFull ? await makePoseidon(DEFAULT_POSEIDON_ARTIFACTS) : null;
-
-      const groups: Line[][] = [];
-      for (let i = 0; i < active.length; i += PROOF_WIDTH)
-        groups.push(active.slice(i, i + PROOF_WIDTH));
-
-      const jobIds: string[] = [];
-      let sum = 0;
-      for (let g = 0; g < groups.length; g++) {
-        setProgress({ i: g + 1, n: groups.length });
-        setPhase('proving');
-        const bundle = { rules: bundleRules, salt: newSalt() };
-        let policy: PolicyWitness;
-        let allowlist: Allowlist | undefined;
-        if (poseidon) {
-          ({ policy, allowlist } = await buildPolicyWitness(bundle, poseidon));
-        } else {
-          policy = policyWitnessFromBundle(bundle);
-        }
-        const base = Date.now();
-        const releases: BatchRelease[] = groups[g].map((l, i) => {
-          const payee = l.payee.trim();
-          const membership = allowlist?.membership(payee);
-          if (allowlist && !membership)
-            throw new Error(`${payee} is not on this limit's approved-payee list`);
-          return {
-            payeeAddress: payee,
-            amountStroops: String(BigInt(Math.round(Number(l.amount) * STROOPS))),
-            spendCounter: String(base + i),
-            membership,
-          };
-        });
-        const now = Math.floor(Date.now() / 1000);
-        const ctx: BatchContext = {
-          validAfter: String(now - 3600),
-          validBefore: String(now + 86400),
-          runningSpend: '0',
-          priorCount: '0',
-        };
-        const proof = await createBatchProof(policy, releases, ctx, {
-          wasmPath: WASM,
-          zkeyPath: ZKEY,
-        });
-        const gsum = releases.reduce((s, r) => s + Number(BigInt(r.amountStroops)) / STROOPS, 0);
-        sum += gsum;
-        const request = buildBatchReleaseRequest(proof, releases, ctx, {
-          vaultTaskId: null,
-          planCostUsdc: gsum,
-          stepId: (base + g) % 1_000_000,
-        });
-        setPhase('relaying');
-        const resp = await apiPost<{ jobId: string }>('/vault/batch-release-proved', request);
-        jobIds.push(resp.jobId);
-      }
-      setPhase('done');
-      setProgress(null);
-      return { jobIds, total: sum, legs: active.length, batches: groups.length };
-    },
+    mutationFn: () =>
+      proveAndReleaseBatch({
+        ceilingUsdc: Number(ceiling),
+        bundleRules: savedBundle,
+        recipients: active.map((l) => ({ payee: l.payee, amount: Number(l.amount) })),
+        onPhase: (p, batch) => {
+          if (p === 'done') {
+            setPhase('done');
+            setProgress(null);
+          } else {
+            setPhase(p);
+            if (batch) setProgress(batch);
+          }
+        },
+      }),
     onError: () => {
       setPhase('idle');
       setProgress(null);

@@ -22,24 +22,22 @@ import { isDemo } from '../../config';
 import { getVault, getDelegate } from '../../lib/vault';
 import { getServices } from '../../lib/services';
 import { getPolicies, createPolicy, type Policy } from '../../lib/policies';
-import {
-  getTasks,
-  createTask,
-  createPayment,
-  planInstruction,
-  type HireMode,
-} from '../../lib/tasks';
+import { getTasks, createTask, planInstruction, type HireMode } from '../../lib/tasks';
+import { proveAndReleaseBatch } from '../../lib/prove';
 import { Card, CardHeader, EmptyState, PageHeader, controls } from '../../components/ui';
 import { LimitsBuilder } from './limits';
 import {
   describeRules,
   describeSavedLimit,
   draftToRules,
+  draftToBundleRules,
+  savedLimitBundleRules,
   emptyDraft,
   getDefaultLimitId,
   LIMIT_CACHE_PREFIX,
   type Draft,
 } from './limits-model';
+import type { PolicyBundleRules } from '@clevercon/agent-sdk/prover';
 
 const inputCls = controls.field;
 const primaryBtn = controls.primary;
@@ -216,18 +214,6 @@ export function CommandChat() {
         policyId: p.policyId,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
-  });
-
-  const pay = useMutation({
-    mutationFn: (p: {
-      kind: 'pay' | 'disburse';
-      lines: { payee: string; amount: number; reason?: string }[];
-      policyId?: string;
-    }) => createPayment({ kind: p.kind, lines: p.lines, policyId: p.policyId }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] });
-      qc.invalidateQueries({ queryKey: ['vault'] });
-    },
   });
 
   const planMut = useMutation({
@@ -410,6 +396,18 @@ export function CommandChat() {
     return undefined;
   }
 
+  // The browser-side prover rules behind a plan's binding: an ad-hoc custom draft,
+  // or a saved limit (its device-local draft, else the server rule). Null means no
+  // rule beyond the ceiling the caller derives, so the proof enforces the ceiling only.
+  function bindToBundleRules(bind: Bind): PolicyBundleRules | null {
+    if (bind.draft) return draftToBundleRules(bind.draft);
+    if (bind.policyId) {
+      const p = policies.find((x) => x.id === bind.policyId);
+      return p ? savedLimitBundleRules(p) : null;
+    }
+    return null;
+  }
+
   async function approve(id: number, plan: Plan) {
     setPlanStatus(id, 'approved');
     if (plan.kind === 'hire' && plan.serviceId) {
@@ -437,22 +435,38 @@ export function CommandChat() {
       }
       return;
     }
-    // pay / disburse: a real, policy-bounded release from the vault.
+    // pay / disburse: a real, policy-bounded release from the vault, PROVEN HERE
+    // in the browser (pp/2) exactly like the Disburse page. Your rule never leaves
+    // this device; the server only relays the proof; the chain verifies it before
+    // the bounded delegate releases a cent.
     if (plan.kind !== 'pay' && plan.kind !== 'disburse') return;
-    const kind = plan.kind;
     try {
-      const policyId = await resolveBinding(plan.bind);
-      await pay.mutateAsync({
-        kind,
-        lines: plan.lines.map((l) => ({ payee: l.payee, amount: l.amount, reason: l.reason })),
-        policyId,
+      const bundleRules = bindToBundleRules(plan.bind);
+      // R1 is always proven. Use the limit's ceiling if it set one; otherwise the
+      // largest line, so "within budget only" plans still satisfy the per-payment
+      // check without an artificial cap.
+      const maxLine = Math.max(...plan.lines.map((l) => l.amount));
+      const ceiling =
+        bundleRules?.perPaymentCeilingUsdc && bundleRules.perPaymentCeilingUsdc > 0
+          ? bundleRules.perPaymentCeilingUsdc
+          : maxLine;
+      push({
+        id: nextId(),
+        role: 'agent',
+        text: 'Proving your plan in the browser with zero-knowledge (a few seconds)…',
       });
-      const total = plan.lines.reduce((s, l) => s + l.amount, 0);
+      const result = await proveAndReleaseBatch({
+        ceilingUsdc: ceiling,
+        bundleRules,
+        recipients: plan.lines.map((l) => ({ payee: l.payee, amount: l.amount })),
+      });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['vault'] });
       push({
         id: nextId(),
         role: 'agent',
         ok: true,
-        text: `Sent $${total.toFixed(2)} across ${plan.lines.length} payment${plan.lines.length > 1 ? 's' : ''}${plan.limit.isPrivate ? ', with your rule kept private' : ''}. Each is a proof-gated vault release; watch it settle in Activity.`,
+        text: `Proved and sent $${result.total.toFixed(2)} across ${result.legs} payment${result.legs > 1 ? 's' : ''} in ${result.batches} on-chain proof${result.batches > 1 ? 's' : ''}${plan.limit.isPrivate ? ', with your rule kept private' : ''}. The chain verified each proof before releasing; watch it settle in Activity.`,
       });
     } catch (e) {
       push({
