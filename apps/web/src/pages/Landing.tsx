@@ -456,8 +456,9 @@ export function Landing() {
               Everything CleverCon offers
             </h2>
             <p className="mt-3 text-slate-400">
-              The vault, policies, SDK, and MCP server are live on testnet today. The full
-              zero-knowledge circuit and mainnet are on the way, built in the open.
+              The vault, private policies, SDK, and MCP server are live on Stellar testnet, with
+              every payment proven on-chain in zero-knowledge. Mainnet and published packages are on
+              the way, built in the open.
             </p>
           </Reveal>
           <div className="mt-12 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -614,10 +615,11 @@ export function Landing() {
               separates it from transparent, custodial, or SDK-only alternatives.
             </p>
             <p className="mt-4 text-sm text-slate-500">
-              Stated honestly: what stays private today is the policy (your caps, allowlist, and
-              limits). Hiding amounts and counterparties as well is the deeper end of the roadmap
-              and leans on Stellar's confidential-token support. Landing the full zero-knowledge
-              circuit is the headline roadmap item.
+              Stated honestly: what stays private is the policy (your caps, allowlist, and limits),
+              enforced by a zero-knowledge proof the chain verifies on every payment, no trusted
+              server. Amounts and counterparties are still public on the ledger, like any Stellar
+              payment; hiding those too leans on Stellar's confidential-token support and is the
+              deeper end of the roadmap.
             </p>
           </Reveal>
 

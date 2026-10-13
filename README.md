@@ -2,178 +2,104 @@
 
 # CleverCon
 
-**Money your AI agent can use, under rules it can't break. A private, non-custodial spending account on Stellar, and an economy to use it in: pay, disburse, hire services, and pay other agents, all within limits only you set and no one else can see.**
+**Money your AI agent can use, under rules it can't break.**
+
+A private, non-custodial spending account for AI agents on Stellar, and an economy to use it in: pay a vendor, disburse to many, hire services, and pay other agents, all within limits only you set and no one else can see.
 
 [![CI](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml/badge.svg)](https://github.com/clevercon-protocol/clevercon/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Network](https://img.shields.io/badge/Network-Stellar%20Testnet-7B2FFF)](https://stellar.expert/explorer/testnet)
-[![CleverVault](https://img.shields.io/badge/CleverVault-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CCLUFH2E5UMJCNB4ZEH3ZP6LGER54J6GSG3YY55T4CIMPSZROU2NU44V)
-[![PolicyVerifier](https://img.shields.io/badge/PolicyVerifier-Deployed-00C853)](https://stellar.expert/explorer/testnet/contract/CAZ2VC6PYIVQ5XLCZ3BP3SPHFTUKFNSQZVAWHS3N5BDLWDOAUK5VHNRP)
+[![Stellar](https://img.shields.io/badge/Built%20on-Stellar-7B2FFF)](https://stellar.org)
 
-[Architecture](docs/architecture.md) · [Private policies spec](docs/private-policies.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
+[Website](https://clevercon.xyz) · [Architecture](docs/architecture.md) · [Private policies](docs/private-policies-v2.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ## What it is
 
-CleverCon gives an AI agent a private, non-custodial spending account on Stellar, and an economy to use it in. You fund a vault, set the limits the agent must obey (a budget, per-payment caps, an allowlist of who it may pay, time windows), and keep those limits private. Then your agent can pay a vendor, disburse to many, hire services and pay per call for APIs, or pay other agents, all within rules only you set and no one else can see.
+CleverCon gives an AI agent a private, non-custodial spending account on Stellar. You fund a vault, set the rules the agent must obey, a budget, per-payment caps, an allowlist of who it may pay, time windows, how often it may pay, and keep those rules private. Your agent can then pay a vendor, disburse to many recipients, hire services and pay per call, or pay other agents, all within limits only you set.
 
-The vault holds your funds non-custodially and gates every release behind an on-chain policy proof tied to your committed rules, so the agent spends within your limits and the rules stay private. The platform never holds your funds.
+The vault holds your funds non-custodially and releases a payment only when a zero-knowledge proof shows it obeys your committed rules. The rules are enforced on-chain but never published, and the platform never takes custody of your funds.
 
 Three things define it:
 
-1. **Bounded and non-custodial.** The agent decides who to pay, when, and how much, but the vault releases a payment only if it passes an on-chain policy check, so even a compromised or careless agent cannot exceed the budget or pay someone you did not approve. The platform never takes custody.
-2. **The rules stay private.** Your caps, allowlist, and limits are committed and checked on-chain without being published: the ledger shows a payment was allowed without revealing the rule that allowed it. A binding proof today, with trustless zero-knowledge verification on the roadmap.
-3. **A real economy, not just a wallet.** Direct payments and disbursements to any allowlisted address, plus a registered service market where agents hire and pay per call (x402/MPP), with on-chain reputation. Reachable from a dApp, an SDK, or an MCP server.
+1. **Bounded and non-custodial.** The agent decides who to pay, when, and how much, but the vault releases a payment only if it passes an on-chain policy check. Even a compromised or careless agent cannot exceed the budget or pay someone you did not approve, and the platform never holds your money.
+2. **Private.** Your caps, allowlist, and limits are committed and verified on-chain with zero-knowledge proofs, without being published. The ledger shows that a payment was allowed without revealing the rule that allowed it. (What stays private is the policy; amounts and destinations are public on the ledger, like any Stellar payment.)
+3. **A real economy, not just a wallet.** Direct payments and disbursements to any allowlisted address, plus a service directory where agents hire and pay per call, with on-chain reputation. Reachable from a web app, an SDK, or an MCP server.
 
-It is live on Stellar testnet today at [clevercon.xyz](https://clevercon.xyz): deployed contracts, a usable app, an SDK, and an MCP server that gives any AI agent a bounded, non-custodial spending account in minutes.
+## Why it matters
+
+Agents are starting to transact, and the hard part isn't moving money, Stellar already settles USDC in seconds for a fraction of a cent. The hard part is letting an agent spend autonomously **without** handing it unbounded access to your funds, and doing so **without** broadcasting your budget and business relationships to everyone reading the chain.
+
+CleverCon is that control layer: non-custodial custody of the funds, on-chain enforcement of what the agent may spend, and privacy of the policy itself. Point any MCP-capable agent (Claude, Cursor, your own) at it and it gets a bounded spending account with no custom integration.
 
 ## What you can use it for
 
-The same primitive, bounded and private agent-driven payments, covers many jobs, not just hiring:
+The same primitive, bounded and private agent-driven payments, covers many jobs:
 
 - **Autonomous disbursements and payouts** to a set of recipients, capped per payment and in total.
 - **Recurring vendor, subscription, and API payments** within a budget.
 - **Agent-to-agent payments**: one agent pays others for sub-tasks.
-- **Treasury and ops automation**: an agent moves funds within a policy you can keep private.
+- **Treasury and ops automation**: an agent moves funds within a policy you keep private.
 - **Grant and bounty disbursement** to approved recipients, up to set limits.
-- **Bounded allowances**: give an agent (or a sub-account) a private, capped wallet.
-- **Buying data, compute, and services**: hire from the built-in directory or pay any provider.
+- **Bounded allowances**: give an agent a private, capped wallet.
+- **Buying data, compute, and services**: hire from the directory or pay any provider.
 
 In every case you set the limits once, the agent decides within them, and the vault enforces the boundary and keeps your rules private.
 
-## Why it matters
+## How it works
 
-Agents are starting to transact. The hard part is not moving money, Stellar already settles USDC in seconds for a fraction of a cent. The hard part is **letting an agent spend autonomously without handing it unbounded access to your funds**, and doing so without broadcasting your budget and business relationships to every competitor reading the chain.
+1. **Fund.** Deposit USDC into the vault, a non-custodial Soroban contract. The platform never holds it.
+2. **Set rules.** Create a reusable spending policy, a budget, and optionally a per-payment cap, an allowlist of payees, per-payee caps, time windows, and a velocity limit. Only a commitment to the rule goes on-chain; the rule itself is never published.
+3. **Instruct your agent.** Point any agent at the vault over MCP, the SDK, or the web app and tell it what to do. It decides who to pay, when, and how much within your limits.
+4. **The vault enforces and proves.** Each payment is gated by a zero-knowledge proof, generated on your side, that the payees and amounts obey your committed policy. The chain verifies the proof before any funds move; anything breaking a rule is refused.
+5. **Settle exactly once.** Releases are idempotent on-chain, so a retry or race never double-pays. Unused budget is refunded, and you can withdraw anytime.
 
-CleverCon is the missing control layer: non-custodial custody of the funds, on-chain enforcement of what the agent may spend, and privacy of the policy itself. The fastest way in is MCP: point any MCP-capable agent (Claude Desktop, Cursor, a custom agent) at CleverCon and it gets a bounded spending account without custom integration. The SDK and dApp are the other two doors.
+Two kinds of conditions: **spending bounds** (caps, allowlist, budget, time windows) are enforced on-chain by the policy; **event conditions** ("pay when X", on a schedule, "if approved") live in your agent, which triggers a payment the vault then checks. So the agent can be wrong about timing or choice within the allowed set, but never about the money boundary. Full detail in [docs/architecture.md](docs/architecture.md).
 
-## Vision and goal
+## Three doors
 
-**Vision:** make Stellar the default rail AI agents spend through, because it is the only one where an agent's spending can be both enforced on-chain and kept private.
-
-**Goal (next 6 to 12 months):**
-
-- Harden the rail to a mainnet-credible state (security audit, disaster recovery, a clear testnet/mainnet switch).
-- Land the full zero-knowledge policy circuit so "the policy stays private" holds under a formal soundness guarantee, not just the v1 binding proof (see [scope, honestly](#privacy-scope-stated-honestly)).
-- Get real agent traffic through the rail with design partners, measured in on-chain payments.
-- Publish the SDK and MCP server so third parties can embed the rail in a few lines.
+- **Web app** ([clevercon.xyz](https://clevercon.xyz)): connect a wallet, fund the vault, build a private policy, instruct an agent in plain language, disburse to many, and watch releases settle, with the proof generated in your browser.
+- **SDK** (`@clevercon/agent-sdk`): `createSpender` for a bounded spending account, `createAgentWallet` for the external x402 economy, and `createProvider` / `createAgent` to be a paid service. See [packages/agent-sdk](packages/agent-sdk).
+- **MCP server** (`@clevercon/mcp`): give any MCP-capable agent a spending account, it can pay, disburse, hire, set limits, and read its budget on the live rail. See [packages/mcp](packages/mcp).
 
 ## What makes it different
 
-| | Transparent on-chain enforcers | Custodial agent wallets | SDK-only tools | **CleverCon** |
+|  | Transparent on-chain enforcers | Custodial agent wallets | SDK-only tools | **CleverCon** |
 |---|---|---|---|---|
 | Funds non-custodial | Varies | No | Varies | **Yes** |
 | Spending enforced on-chain | Yes | No (off-chain) | No | **Yes** |
-| Policy kept private | No | n/a | No | **Yes (v1 commitment + proof)** |
+| Policy kept private | No | n/a | No | **Yes** |
 | Agent-native access (MCP) | Rare | Rare | No | **Yes** |
+| A built-in economy to spend in | No | No | No | **Yes** |
 
-The closest ecosystem work enforces agent spending on-chain but leaves the policy public. CleverCon delivers the same on-chain enforcement and adds privacy of the policy, which is the part nobody else has.
+Others enforce agent spending on-chain but leave the policy public, or offer a private account with no economy around it. CleverCon is the only one with on-chain enforcement, a private policy, **and** an agent economy to use it in.
 
-<a id="privacy-scope-stated-honestly"></a>
-### Privacy: scope, stated honestly
-
-What is private today: the policy (your caps, allowlist, and per-payment limits) and the link between the policy and a release. The vault stores only a commitment to the rule, never the rule in the clear, and verifies a proof that each release obeys it.
-
-What is not yet private: the v1 on-chain verifier is a binding check, not a full pairing verification, so v1 trusts the proving stack for soundness of the predicate. Fully hiding payment amounts and counterparties as well is the deeper end of the roadmap and depends on Stellar's upcoming confidential-token support. The normative threat model and limitations are frozen in [docs/private-policies.md](docs/private-policies.md). We state this plainly because precision here is a feature, not a caveat.
-
-Landing the full zero-knowledge policy circuit, so soundness is formal and the binding-proof caveat is retired, is the headline roadmap item.
-
-## How it works
-
-1. **Fund.** Connect a wallet and deposit USDC into CleverVault, a non-custodial Soroban contract. The platform never holds it.
-2. **Set limits.** Create a reusable spending policy: a budget, and optionally a per-payment cap, an allowlist of payees, and a time window. You apply a policy per job and can keep several. In private mode only a commitment to the rule is stored; the rule itself is never persisted.
-3. **Instruct your agent.** Point any agent at the vault (over MCP, the SDK, or the dApp) and tell it what to do. It decides who to pay, when, and how much within your limits; it never holds custody of your funds.
-4. **The vault enforces and proves.** Each payment calls the on-chain policy verifier with a proof bound to the exact payee and amount, with replay protection. Only an explicit pass moves funds; anything breaking a rule is refused.
-5. **Settle exactly once.** Releases are idempotent by (task, step) on-chain, so a retry or a race never double-pays. Unused budget is refunded, and you can withdraw anytime.
-
-Two kinds of conditions: **spending bounds** (caps, allowlist, budget, time windows) are enforced on-chain by the policy; **event or business conditions** ("pay when X", on a schedule, "if approved") live in your agent, which triggers a payment the vault then checks. So the agent can be wrong about timing or choice within the allowed set, but never about the money boundary. The full fund-flow and trust model are in [docs/architecture.md](docs/architecture.md).
-
-### Two ways funds move
-
-- **Direct (registered services and any Stellar address you allowlist):** the vault pays the payee directly under your policy. Strongest guarantee: payee and amount are enforced on-chain, and the platform never holds funds.
-- **Agent-key (the open x402/MPP economy):** the vault tops up your agent's own key in bounded amounts under your policy, and your agent signs the external payment. This reaches services outside CleverCon while the budget and privacy stay enforced; the platform still never holds funds. Implemented and proven end to end on testnet: `createAgentWallet` in the SDK unites the governed top-up with an x402-paying fetch, and the vault, agent wallet, and external x402 service all settle in the same Stellar USDC through the public facilitator.
-
-### Hiring services (one application)
-
-When the payees are service providers, hiring takes three shapes:
-
-- **Pay a provider you chose.** Point CleverCon at a specific service and make a single bounded, private payment.
-- **Find and pay one service.** Describe what you need; the curated directory returns matching services by capability, price, and reputation. Pick one and pay.
-- **Compose a multi-service job.** For work that spans services (gather data, analyze it, write a report), your agent plans the steps, hires a service for each, and pays as each completes.
-
-The directory is one side of the economy, a registered service market with on-chain reputation, open to any provider. The other side is direct payments, and the account works the same whether your agent pays one address, many, or services. The private, bounded control underneath is what makes all of it safe.
-
-## What runs today (Stellar testnet)
-
-**On-chain (Soroban / Rust):**
-- **CleverVault**: non-custodial deposits, per-task budget locking, proof-gated per-step release, refunds, multi-asset support, storage TTL management, and admin controls, with a 100+ case test suite.
-- **PolicyVerifier**: an on-chain `verify_policy` entrypoint, fail-closed. A proof built by the TypeScript prover is accepted by the deployed contract on testnet, and a mismatched amount is rejected. This is a real cross-language prover-to-contract validation, not a mock.
-- **Registry**: on-chain service registration and reputation.
-
-**Backend (production rewrite, built for scale and concurrency):**
-- **API** (NestJS): SEP-10 wallet auth, rotating JWT refresh, RBAC, hashed scoped API keys with daily usage quotas, step-up auth for money actions, rate limiting, structured logging, and an OpenTelemetry skeleton.
-- **Indexer**: ingests on-chain events with a resumable cursor.
-- **Workers** (BullMQ): task execution, proof generation, and exactly-once settlement.
-- **Real-time**: Socket.IO with a Redis adapter for live task and proof updates.
-
-**Product surfaces:**
-- **Web app**: connect a wallet, add a USDC trustline, fund the vault, create a private policy, hire services, request a compliance proof, and watch releases settle, all live.
-- **Service directory**: browse, search, filter, and sort the registered service market an agent can hire and pay per call (x402/MPP), with on-chain reputation.
-- **Admin console**: monitoring, user and role management, on-chain protocol-fee config, service moderation, and dispute arbitration.
-- **Developer platform**: API keys with quotas, signed webhooks, an **SDK** (`@clevercon/agent-sdk`: `createSpender` for a bounded spending account, `createAgentWallet` for x402 agent-key mode, `createProvider`/`createAgent` to be a paid service), and a Stellar **MCP server** (`@clevercon/mcp`, 12 tools) that pays, disburses, hires, and tracks on the live rail.
-
-**Proven end to end:** a headless testnet harness (`scripts/e2e-testnet.ts`, 29 stages) drives the whole loop with a fresh keypair and no browser: fund, set a policy, authorize the delegate, pay, disburse, hire a live provider, spend via the SDK and MCP, top up an agent wallet and pay an external x402 service, receive a signed webhook, retry idempotently, then withdraw. Every stage is a real on-chain settlement.
-
-**Recognition:** placed 2nd in the Stellar Agents hackathon.
-
-## Architecture
+## Repository structure
 
 ```
 clevercon/
 ├── contracts/                 Soroban / Rust
-│   ├── agent-vault/           CleverVault: non-custodial treasury + proof-gated release
-│   ├── policy-verifier/       on-chain verify_policy (private spending policies)
+│   ├── agent-vault/           non-custodial treasury + proof-gated release
+│   ├── policy-verifier/       on-chain zero-knowledge proof verification
 │   └── registry/              on-chain service registration + reputation
-├── apps/
-│   └── web/                   production app (React 19 + Vite + Tailwind)
+├── apps/web/                  web app (React + Vite + Tailwind)
 ├── services/
-│   ├── api/                   NestJS API (auth, tasks, policies, vault, admin, dev platform)
+│   ├── api/                   NestJS API (auth, tasks, policies, vault, admin)
 │   ├── indexer/               on-chain event ingestion (resumable cursor)
-│   ├── workers/               BullMQ: execution, proof generation, exactly-once settlement
-│   └── reference-provider/    canonical provider implementing the fulfillment contract
+│   ├── workers/               BullMQ: execution, proving, exactly-once settlement
+│   └── reference-provider/    canonical paid-service implementation
 ├── packages/
-│   ├── common/                shared types, policy-input encoding, binding-proof prover
-│   ├── db/                    Prisma schema, client, secret crypto
-│   ├── agent-sdk/             SDK: createSpender, createAgentWallet, createProvider, createAgent
-│   └── mcp/                   Stellar MCP server (spend, disburse, hire, limits, budget: 12 tools)
+│   ├── common/                shared types + policy encoding
+│   ├── db/                     Prisma schema, client, secret crypto
+│   ├── agent-sdk/             SDK: createSpender / createAgentWallet / createProvider
+│   └── mcp/                    MCP server for agents
+├── circuits/                  zero-knowledge spending-policy circuits
 └── docs/                      architecture, private-policies spec, development
 ```
 
-The earlier hackathon stack (an Express orchestrator, a JSON registry, sample agents, and the budget-guardian contract) has been removed to keep the repo focused on the product; it remains in the git history.
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Smart contracts | Rust / Soroban (CleverVault, PolicyVerifier, Registry) |
-| Zero-knowledge | Noir circuit (`circuits/spend-policy`) built and proven in CI; on-chain verification is a binding check today, full pairing verification pending Stellar precompiles |
-| Frontend | React 19, Vite, Tailwind, TanStack Query, Zustand |
-| API | NestJS 11 (ESM + swc), PostgreSQL + Prisma, SEP-10 auth, RBAC |
-| Async | Redis + BullMQ (execution, proofs, settlement), Socket.IO + Redis adapter |
-| Payments | Direct vault-settled USDC releases (proof-gated) to allowlisted addresses; agent-key mode for the external x402 / MPP economy (implemented, proven on testnet via `createAgentWallet`) |
-| Wallets | `@creit.tech/stellar-wallets-kit` (Freighter, xBull, Albedo, LOBSTR, Rabet) |
-| Chain access | `@stellar/stellar-sdk`, Soroban RPC, Horizon |
-
 ## Quick start
 
-### Prerequisites
-
-- Node.js 20+ (see `.nvmrc`)
-- Docker (for PostgreSQL and Redis), or your own instances
-- A Stellar wallet (Freighter) set to testnet
-
-### Run the full stack locally
+**Prerequisites:** Node.js 20+ (see `.nvmrc`), Docker (for PostgreSQL and Redis), and a Stellar wallet (Freighter) on testnet.
 
 ```bash
 git clone https://github.com/clevercon-protocol/clevercon.git
@@ -185,45 +111,29 @@ docker compose up -d postgres redis
 npm run -w @clevercon/db generate && npm run -w @clevercon/db push
 
 # in separate terminals:
-npm run dev -w @clevercon/api        # API on :4100
-npm run dev -w @clevercon/workers    # execution, proofs, settlement
+npm run dev -w @clevercon/api        # API
+npm run dev -w @clevercon/workers    # execution, proving, settlement
 npm run dev -w @clevercon/indexer    # on-chain event ingestion
-npm run dev -w @clevercon/web        # app on :5173
+npm run dev -w @clevercon/web        # web app
 ```
 
-See [docs/development.md](docs/development.md) for the full environment and the reference provider. `apps/web` has a backendless demo mode (`VITE_BACKEND=demo`) for a no-backend preview, and deploys to Cloudflare Pages.
+`apps/web` has a backendless demo mode (`VITE_BACKEND=demo`) for a no-backend preview. See [docs/development.md](docs/development.md) for the full setup.
 
-### Use it from an AI agent (MCP)
+**From an agent (MCP):** point any MCP client at `@clevercon/mcp` with `CLEVERCON_API_URL` and a scoped `CLEVERCON_API_KEY`. See [packages/mcp/README.md](packages/mcp/README.md).
 
-Point any MCP client at `@clevercon/mcp` with `CLEVERCON_API_URL` and a scoped `CLEVERCON_API_KEY`, and the agent can search for services, hire one, and track the task on the live rail. See [packages/mcp/README.md](packages/mcp/README.md).
-
-## Deployments (Stellar Testnet)
+## Deployments (Stellar testnet)
 
 | Component | Address |
 |---|---|
-| CleverVault | [`CCLUFH2E...NU44V`](https://stellar.expert/explorer/testnet/contract/CCLUFH2E5UMJCNB4ZEH3ZP6LGER54J6GSG3YY55T4CIMPSZROU2NU44V) |
-| PolicyVerifier | [`CAZ2VC6P...HNRP`](https://stellar.expert/explorer/testnet/contract/CAZ2VC6PYIVQ5XLCZ3BP3SPHFTUKFNSQZVAWHS3N5BDLWDOAUK5VHNRP) |
-| Registry | [`CAN2A7GA...AQ4H6RM`](https://stellar.expert/explorer/testnet/contract/CAN2A7GA2PNL4BYEBN3DZM3G74CNMJ2WAB2WTEMO4L6MIY5F2AQ4H6RM) |
-| USDC (Circle testnet SAC) | [`CBIELTK6...HMXQDAMA`](https://stellar.expert/explorer/testnet/contract/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA) |
-
-## Roadmap
-
-Near-term, toward mainnet:
-
-1. **Full ZK policy circuit** in CleverVault, so policy soundness is formal and the binding-proof caveat is retired.
-2. **Security audit** of the contracts and API, plus a documented threat model and disaster-recovery runbook.
-3. **Mainnet deploy** with a clear testnet/mainnet network switch.
-4. **Real traction** with design partners, measured in on-chain payments.
-5. **Published SDK and MCP** on npm for external install.
-
-Longer-term: confidential amounts and counterparties (pending Stellar confidential tokens), deeper ecosystem integrations, and on-chain dispute resolution. Full detail in [ROADMAP.md](ROADMAP.md).
+| Vault | [`CCLUFH2E…NU44V`](https://stellar.expert/explorer/testnet/contract/CCLUFH2E5UMJCNB4ZEH3ZP6LGER54J6GSG3YY55T4CIMPSZROU2NU44V) |
+| PolicyVerifier | [`CAZ2VC6P…HNRP`](https://stellar.expert/explorer/testnet/contract/CAZ2VC6PYIVQ5XLCZ3BP3SPHFTUKFNSQZVAWHS3N5BDLWDOAUK5VHNRP) |
+| Registry | [`CAN2A7GA…AQ4H6RM`](https://stellar.expert/explorer/testnet/contract/CAN2A7GA2PNL4BYEBN3DZM3G74CNMJ2WAB2WTEMO4L6MIY5F2AQ4H6RM) |
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Private policies spec](docs/private-policies.md)
-- [Operations and disaster recovery](docs/operations.md)
-- [Development guide](docs/development.md)
+- [Architecture](docs/architecture.md) — fund flow, trust model, contracts
+- [Private policies](docs/private-policies-v2.md) — the policy model, proofs, and threat model
+- [Development](docs/development.md) · [Operations](docs/operations.md)
 - [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## License
