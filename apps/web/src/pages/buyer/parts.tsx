@@ -39,6 +39,8 @@ import {
   setAgentWallet,
 } from '../../lib/vault';
 import { getTasks, createTask, type HireMode } from '../../lib/tasks';
+import { getConnectedAddress } from '../../lib/wallet';
+import { useWalletAuth } from '../../auth/useWalletAuth';
 import {
   getPolicies,
   createPolicy,
@@ -182,6 +184,7 @@ export function StatsRow() {
 export function WalletCard() {
   const qc = useQueryClient();
   const address = useSession((s) => s.session?.address ?? '');
+  const { connect } = useWalletAuth();
   const [copied, setCopied] = useState(false);
   const {
     data: bal,
@@ -192,6 +195,17 @@ export function WalletCard() {
     queryFn: () => getWalletBalances(address),
     enabled: !!address,
   });
+
+  // Detect that the browser wallet switched to a different account than the one
+  // this session signed in with, which is what breaks deposits/withdraws/signing.
+  const { data: liveAddress } = useQuery({
+    queryKey: ['wallet-connected-address'],
+    queryFn: getConnectedAddress,
+    enabled: !isDemo() && !!address,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
+  const mismatch = !!address && !!liveAddress && liveAddress !== address;
 
   const trust = useMutation({
     mutationFn: () => addUsdcTrustline(address),
@@ -228,6 +242,15 @@ export function WalletCard() {
           >
             <ExternalLink size={13} />
           </a>
+          {!isDemo() && (
+            <button
+              onClick={() => connect()}
+              className="text-[11px] text-slate-500 underline-offset-2 hover:text-white hover:underline"
+              title="Reconnect or switch wallet"
+            >
+              Reconnect
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-6">
           <div>
@@ -260,6 +283,21 @@ export function WalletCard() {
           </button>
         )}
       </div>
+      {mismatch && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] p-3 text-sm text-amber-200">
+          <span>
+            Your wallet is on a different account ({liveAddress!.slice(0, 4)}…{liveAddress!.slice(-4)}
+            ) than this session ({address.slice(0, 4)}…{address.slice(-4)}). Reconnect to use the
+            current account.
+          </span>
+          <button
+            onClick={() => connect()}
+            className="font-medium underline hover:text-amber-100"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
       {error && (
         <p className="mt-2 text-xs text-red-400">Could not load wallet balances from Horizon.</p>
       )}

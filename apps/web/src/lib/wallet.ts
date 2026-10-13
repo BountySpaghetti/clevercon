@@ -69,7 +69,32 @@ export async function signTransaction(xdr: string, networkPassphrase: string): P
   // The kit instance does not survive a page refresh; re-select the persisted
   // wallet so signing works even when only the session was restored.
   ensureWallet(kit);
-  const { signedTxXdr } = await kit.signTransaction(xdr, { networkPassphrase });
-  if (!signedTxXdr) throw new Error('Wallet returned no signed transaction');
-  return signedTxXdr;
+  try {
+    const { signedTxXdr } = await kit.signTransaction(xdr, { networkPassphrase });
+    if (!signedTxXdr) throw new Error('Wallet returned no signed transaction');
+    return signedTxXdr;
+  } catch (e) {
+    const msg = (e as Error)?.message ?? '';
+    // The common cause here is the wallet being locked, disconnected, or switched
+    // to a different account than this session. Make that actionable.
+    if (/not connected|no wallet|getAddress|account|rejected|user declined/i.test(msg)) {
+      throw new Error(
+        'Wallet not available (it may be locked or on a different account than this session). Reconnect your wallet and try again.',
+      );
+    }
+    throw e as Error;
+  }
+}
+
+/** The wallet's current active address, or null if it can't be read (locked /
+ * disconnected). Used to detect that the browser wallet switched accounts. */
+export async function getConnectedAddress(): Promise<string | null> {
+  try {
+    const kit = await getKit();
+    ensureWallet(kit);
+    const { address } = await kit.getAddress();
+    return address || null;
+  } catch {
+    return null;
+  }
 }
