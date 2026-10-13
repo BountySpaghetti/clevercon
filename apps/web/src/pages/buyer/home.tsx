@@ -188,6 +188,8 @@ export function CommandChat() {
   });
   const services = servicePage?.items ?? [];
   const { data: policies = [] } = useQuery({ queryKey: ['policies'], queryFn: getPolicies });
+  const { data: vaultData } = useQuery({ queryKey: ['vault'], queryFn: getVault });
+  const { data: delegateData } = useQuery({ queryKey: ['delegate'], queryFn: getDelegate });
   const defaultPolicy = policies.find((p) => p.id === getDefaultLimitId());
 
   // Resolve the current selection to (a) what the vault enforces, and (b) how it binds.
@@ -447,6 +449,29 @@ export function CommandChat() {
     // this device; the server only relays the proof; the chain verifies it before
     // the bounded delegate releases a cent.
     if (plan.kind !== 'pay' && plan.kind !== 'disburse') return;
+
+    // Preconditions the chain would otherwise fail on AFTER proving: autopay must be
+    // authorized and the vault must hold enough. Guide instead of proving-then-failing.
+    const planTotal = plan.lines.reduce((s, l) => s + l.amount, 0);
+    if (!delegateData?.registered) {
+      push({
+        id: nextId(),
+        role: 'agent',
+        ok: false,
+        text: 'Autopay isn’t enabled yet. Open the Vault tab and authorize the delegate once (a single signature), then approve this again.',
+      });
+      return;
+    }
+    if (planTotal > (vaultData?.available ?? 0)) {
+      push({
+        id: nextId(),
+        role: 'agent',
+        ok: false,
+        text: `Not enough in your vault: this needs ${planTotal.toFixed(2)} USDC but ${(vaultData?.available ?? 0).toFixed(2)} is available. Fund your vault (Vault tab), then approve again.`,
+      });
+      return;
+    }
+
     try {
       const bundleRules = bindToBundleRules(plan.bind);
       // R1 is always proven. Use the limit's ceiling if it set one; otherwise the

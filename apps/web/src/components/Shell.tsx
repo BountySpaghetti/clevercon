@@ -262,7 +262,7 @@ export function Shell({ children }: { children: ReactNode }) {
             onClick={toggleCollapsed}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-white"
+            className="flex items-center justify-center rounded-lg border border-line-strong bg-white/[0.05] p-1.5 text-slate-300 transition-colors hover:border-violet-500/40 hover:bg-violet-500/[0.12] hover:text-white"
           >
             {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
           </button>

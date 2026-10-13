@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { isDemo } from '../config';
 import { useSession, type Role } from '../store/session';
 import { apiPost } from '../lib/api';
@@ -24,12 +25,16 @@ interface VerifyResp {
 export function useWalletAuth() {
   const setSession = useSession((s) => s.setSession);
   const clear = useSession((s) => s.clear);
+  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function connect(): Promise<void> {
     setBusy(true);
     setError(null);
+    // Drop any cached data from a previous wallet so one account never shows
+    // another's vault, policies, or activity in the same browser.
+    qc.clear();
     try {
       if (isDemo()) {
         setSession({
@@ -60,6 +65,7 @@ export function useWalletAuth() {
   const disconnect = () => {
     clearSelectedWallet();
     clear();
+    qc.clear(); // purge the previous user's cached vault/policies/activity
   };
 
   return { connect, disconnect, busy, error };

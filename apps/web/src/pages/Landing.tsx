@@ -343,6 +343,9 @@ export function Landing() {
             <a href="#how" className="hover:text-white transition-colors">
               How it works
             </a>
+            <a href="#developers" className="hover:text-white transition-colors">
+              Developers
+            </a>
             <a href="#privacy" className="hover:text-white transition-colors">
               Privacy
             </a>
@@ -617,6 +620,67 @@ export function Landing() {
               </p>
             </div>
           </Reveal>
+        </div>
+      </section>
+
+      {/* For developers */}
+      <section id="developers" className="border-t border-white/5 px-5 py-20">
+        <div className="mx-auto max-w-5xl">
+          <Reveal className="mx-auto max-w-2xl text-center">
+            <p className="text-xs font-medium uppercase tracking-wider text-violet-400">
+              For developers
+            </p>
+            <h2 className="mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              Give your agent a spending account in two lines
+            </h2>
+            <p className="mt-3 text-slate-400">
+              Published on npm. Point your agent at CleverCon over MCP, or embed the SDK in your own
+              app, and it spends within your private limits.
+            </p>
+          </Reveal>
+          <div className="mt-10 grid gap-5 md:grid-cols-2">
+            {[
+              {
+                name: '@clevercon/mcp',
+                tagline: 'For any MCP agent (Claude, Cursor, …)',
+                cmd: 'npm install @clevercon/mcp',
+                href: 'https://www.npmjs.com/package/@clevercon/mcp',
+                icon: Layers,
+              },
+              {
+                name: '@clevercon/agent-sdk',
+                tagline: 'For your own app or agent',
+                cmd: 'npm install @clevercon/agent-sdk',
+                href: 'https://www.npmjs.com/package/@clevercon/agent-sdk',
+                icon: Boxes,
+              },
+            ].map((p) => (
+              <Reveal key={p.name}>
+                <a
+                  href={p.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group block h-full rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-violet-500/40 hover:bg-white/[0.04]"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-violet-500/20 bg-violet-500/10">
+                      <p.icon size={18} className="text-violet-300" />
+                    </div>
+                    <div>
+                      <div className="font-mono text-sm font-semibold text-white">{p.name}</div>
+                      <div className="text-xs text-slate-500">{p.tagline}</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 font-mono text-[13px] text-slate-200">
+                    <span>$ {p.cmd}</span>
+                    <span className="text-xs text-violet-300 transition-opacity group-hover:opacity-100 sm:opacity-0">
+                      npm ↗
+                    </span>
+                  </div>
+                </a>
+              </Reveal>
+            ))}
+          </div>
         </div>
       </section>
 

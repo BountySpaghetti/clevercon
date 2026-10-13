@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Plus,
@@ -12,9 +13,22 @@ import {
   Layers,
 } from 'lucide-react';
 import { getPolicies } from '../../lib/policies';
+import { getVault, getDelegate } from '../../lib/vault';
 import { describeSavedLimit, savedLimitBundleRules } from './limits-model';
 import { proveAndReleaseBatch, PROOF_WIDTH, MAX_RECIPIENTS } from '../../lib/prove';
 import type { PolicyBundleRules } from '@clevercon/agent-sdk/prover';
+
+// Persist the in-progress recipients + ceiling so navigating away and back does not
+// lose a half-filled disbursement.
+const DRAFT_KEY = 'cc:disburse:draft';
+const loadDraft = (): { ceiling: string; lines: Line[] } | null => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as { ceiling: string; lines: Line[] }) : null;
+  } catch {
+    return null;
+  }
+};
 
 type Line = { payee: string; amount: string };
 type Result = { jobIds: string[]; total: number; legs: number; batches: number };
@@ -27,14 +41,28 @@ type Phase = 'idle' | 'proving' | 'relaying' | 'done';
  * recipient lists are split automatically into one proof per group of four.
  */
 export function DisbursePage() {
-  const [ceiling, setCeiling] = useState('10');
+  const draft = loadDraft();
+  const [ceiling, setCeiling] = useState(draft?.ceiling ?? '10');
   // The picked saved limit's full prover rules (allowlist, rolling cap, velocity,
   // deny-list). The ceiling stays its own editable field and overrides the bundle's.
   const [savedBundle, setSavedBundle] = useState<PolicyBundleRules | null>(null);
-  const [lines, setLines] = useState<Line[]>([{ payee: '', amount: '' }]);
+  const [lines, setLines] = useState<Line[]>(draft?.lines ?? [{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
   const { data: policies = [] } = useQuery({ queryKey: ['policies'], queryFn: getPolicies });
+  const { data: vault } = useQuery({ queryKey: ['vault'], queryFn: getVault });
+  const { data: delegate } = useQuery({ queryKey: ['delegate'], queryFn: getDelegate });
+  const available = vault?.available ?? 0;
+  const autopayOn = delegate?.registered ?? false;
+
+  // Persist the draft (recipients + ceiling) so it survives navigation.
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ ceiling, lines }));
+    } catch {
+      // ignore
+    }
+  }, [ceiling, lines]);
 
   const setLine = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -55,7 +83,18 @@ export function DisbursePage() {
     ? new Set(savedBundle.allowlist.map((e) => e.payeeAddress.trim()))
     : null;
   const offAllowlist = allowSet ? active.filter((l) => !allowSet.has(l.payee.trim())) : [];
-  const canSubmit = Number(ceiling) > 0 && active.length > 0 && offAllowlist.length === 0;
+
+  // Preconditions the chain would otherwise fail on: you can only spend what's in
+  // the vault, and a release needs the bounded delegate (autopay) authorized. Block
+  // and guide BEFORE proving, instead of proving and then silently failing on-chain.
+  const insufficient = total > available && active.length > 0;
+  const blocker: null | 'autopay' | 'balance' = !autopayOn
+    ? 'autopay'
+    : insufficient
+      ? 'balance'
+      : null;
+  const canSubmit =
+    Number(ceiling) > 0 && active.length > 0 && offAllowlist.length === 0 && blocker === null;
 
   const disburse = useMutation<Result>({
     mutationFn: () =>
@@ -73,6 +112,14 @@ export function DisbursePage() {
           }
         },
       }),
+    onSuccess: () => {
+      // The batch was relayed; drop the saved draft so it doesn't persist a sent list.
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        // ignore
+      }
+    },
     onError: () => {
       setPhase('idle');
       setProgress(null);
@@ -307,6 +354,25 @@ export function DisbursePage() {
                 {busy ? `Proving…` : 'Prove & disburse'}
               </button>
             </div>
+            {blocker === 'autopay' && (
+              <p className="text-sm text-amber-300">
+                Autopay isn&apos;t enabled yet.{' '}
+                <Link to="/app/vault" className="font-medium underline hover:text-amber-200">
+                  Authorize the delegate
+                </Link>{' '}
+                once so the vault can release payments, then come back.
+              </p>
+            )}
+            {blocker === 'balance' && (
+              <p className="text-sm text-amber-300">
+                Not enough in your vault: this needs {total.toFixed(2)} USDC but{' '}
+                {available.toFixed(2)} is available.{' '}
+                <Link to="/app/vault" className="font-medium underline hover:text-amber-200">
+                  Fund your vault
+                </Link>{' '}
+                first.
+              </p>
+            )}
             {disburse.error && (
               <p className="text-sm text-amber-300">{(disburse.error as Error).message}</p>
             )}
