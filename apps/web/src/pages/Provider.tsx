@@ -96,6 +96,7 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
   const [price, setPrice] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [address, setAddress] = useState('');
+  const [pricingModel, setPricingModel] = useState<'X402' | 'MPP'>('X402');
 
   const reg = useMutation({
     mutationFn: () =>
@@ -103,7 +104,7 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
         name: name.trim(),
         description: description.trim(),
         category: category.trim() || undefined,
-        pricingModel: 'X402',
+        pricingModel,
         pricePerCall: Number(price),
         endpoint: endpoint.trim(),
         stellarAddress: address.trim(),
@@ -143,6 +144,12 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
       }}
       className="mt-4 space-y-3 rounded-xl bg-black/20 p-4"
     >
+      <p className="text-xs leading-relaxed text-slate-400">
+        Your service lists immediately as <span className="text-slate-300">New</span> and earns a{' '}
+        <span className="text-emerald-300">Trusted</span> tier as it settles real jobs on-chain.
+        Buyers pay you from their vault under a private, policy-bounded release, you are never given
+        their key or their rule.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <input
           value={name}
@@ -184,14 +191,25 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
           {hint(!endpointOk, 'Must be a valid http(s) URL.')}
         </div>
       </div>
-      <div>
-        <input
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          placeholder="Stellar payout address (G…)"
-          className={`${controls.field} font-mono`}
-        />
-        {hint(!addressOk, 'Must be a valid Stellar public key (G… , 56 chars).')}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="sm:col-span-2">
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="Stellar payout address (G…)"
+            className={`${controls.field} font-mono`}
+          />
+          {hint(!addressOk, 'Must be a valid Stellar public key (G… , 56 chars).')}
+        </div>
+        <select
+          value={pricingModel}
+          onChange={(e) => setPricingModel(e.target.value as 'X402' | 'MPP')}
+          className={controls.field}
+          aria-label="Charging model"
+        >
+          <option value="X402">x402 (per call)</option>
+          <option value="MPP">MPP (metered)</option>
+        </select>
       </div>
       <div className="flex items-center gap-3">
         <button type="submit" disabled={!canSubmit} className={controls.primary}>
