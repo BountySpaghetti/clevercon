@@ -227,7 +227,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('cc:railCollapsed') === '1';
+      return localStorage.getItem('cc:railCollapsed:v2') === '1';
     } catch {
       return false;
     }
@@ -236,7 +236,7 @@ export function Shell({ children }: { children: ReactNode }) {
     setCollapsed((c) => {
       const next = !c;
       try {
-        localStorage.setItem('cc:railCollapsed', next ? '1' : '0');
+        localStorage.setItem('cc:railCollapsed:v2', next ? '1' : '0');
       } catch {
         // ignore
       }
