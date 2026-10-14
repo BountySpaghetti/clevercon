@@ -7,7 +7,11 @@ export type ActivityKind =
   | 'task_completed'
   | 'task_failed'
   | 'task_cancelled'
-  | 'payment';
+  | 'payment'
+  | 'deposit'
+  | 'withdraw';
+
+const STROOPS_PER_USDC = 10_000_000;
 
 export interface ActivityItem {
   id: string;
@@ -111,7 +115,58 @@ export class ActivityService {
       });
     }
 
+    // Vault money movements (deposit/withdraw) from the on-chain event log, so the
+    // timeline reflects funding too, not only task spend. Best-effort: these are a
+    // nice-to-have, so a lookup hiccup must never break the rest of the feed.
+    try {
+      items.push(...(await this.vaultMovements(userId, limit)));
+    } catch {
+      // ignore
+    }
+
     items.sort((a, b) => b.at.localeCompare(a.at));
     return items.slice(0, limit);
+  }
+
+  /**
+   * The buyer's vault deposits/withdrawals, read from the indexed chain-event log
+   * (topics[0] is the account, data.amount is in stroops). We scan a bounded recent
+   * window and filter to the user's wallet addresses in memory; at higher volume
+   * this should move to a per-address index or a dedicated ledger table.
+   */
+  private async vaultMovements(userId: string, limit: number): Promise<ActivityItem[]> {
+    const wallets = await this.prisma.wallet.findMany({
+      where: { userId },
+      select: { address: true },
+    });
+    const addresses = new Set(wallets.map((w) => w.address));
+    if (addresses.size === 0) return [];
+
+    const events = await this.prisma.chainEvent.findMany({
+      where: { type: { in: ['deposit_event', 'withdraw_event'] } },
+      orderBy: { ledger: 'desc' },
+      take: 400,
+    });
+
+    const out: ActivityItem[] = [];
+    for (const e of events) {
+      const p = e.payload as { topics?: unknown[]; data?: { amount?: string } | null } | null;
+      const account = typeof p?.topics?.[0] === 'string' ? (p.topics[0] as string) : '';
+      if (!addresses.has(account)) continue;
+      const raw = p?.data?.amount;
+      const asset = typeof p?.topics?.[1] === 'string' ? (p.topics[1] as string) : undefined;
+      const isDeposit = e.type === 'deposit_event';
+      out.push({
+        id: `chain-${e.id}`,
+        kind: isDeposit ? 'deposit' : 'withdraw',
+        title: isDeposit ? 'Deposited to vault' : 'Withdrew from vault',
+        amount: raw != null ? Number(BigInt(raw)) / STROOPS_PER_USDC : undefined,
+        asset,
+        txHash: e.txHash,
+        at: e.createdAt.toISOString(),
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 }

@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { VaultService } from './vault.service.js';
 import { QueueService } from '../queue/queue.service.js';
@@ -139,5 +148,19 @@ export class VaultController {
       proof: req.proof,
     });
     return { jobId, status: 'queued' };
+  }
+
+  /**
+   * Poll a batch-release job for its real outcome, so the UI can show a true
+   * "Completed" / "Failed" rather than a premature "Accepted". The jobId embeds
+   * the owner's id (`batch-<userId>-<stepId>`), so a caller can only read their
+   * own jobs.
+   */
+  @Get('batch-job/:jobId')
+  async batchJob(@CurrentUser() user: AuthUser, @Param('jobId') jobId: string) {
+    if (!jobId.startsWith(`batch-${user.userId}-`)) {
+      throw new ForbiddenException('not your job');
+    }
+    return (await this.queue.getBatchJob(jobId)) ?? { state: 'unknown', result: null };
   }
 }

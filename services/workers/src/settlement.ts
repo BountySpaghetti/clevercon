@@ -444,6 +444,75 @@ export interface BatchSettlePayload {
  * no per-leg DB write is needed here. Runs inside the per-signer serialized
  * section so it never races the delegate's sequence number.
  */
+/**
+ * Mirror a pp/2 batch into the DB so it appears in the owner's Activity and the UI
+ * can confirm the outcome. A Task (mode DISBURSE) plus a Payment per payee on
+ * success; a FAILED Task on a failed release (the funds were rolled back, but the
+ * attempt is still worth showing). Keyed by (buyerId, stepId) so a replay never
+ * double-logs. Best-effort: the money has already moved on-chain, so a logging
+ * hiccup must never change the settlement outcome.
+ */
+async function recordBatchActivity(
+  prisma: PrismaClient,
+  payload: BatchSettlePayload,
+  outcome: { ok: true; txHash: string } | { ok: false; reason: string },
+): Promise<void> {
+  try {
+    const asset = env('USDC_SAC');
+    const wallet = await prisma.wallet.findFirst({
+      where: { userId: payload.buyerId },
+      orderBy: { createdAt: 'asc' },
+    });
+    const fromAddress = wallet?.address ?? 'vault';
+    const amounts = payload.amountsStroops.map((s) => Number(BigInt(s)) / STROOPS_PER_USDC);
+    const total = amounts.reduce((a, b) => a + b, 0);
+    const n = payload.payees.length;
+    const idemKey = `batch-${payload.buyerId}-${payload.stepId}`;
+    const title = `Disburse to ${n} recipient${n === 1 ? '' : 's'}`;
+
+    const task = await prisma.task.upsert({
+      where: { buyerId_idempotencyKey: { buyerId: payload.buyerId, idempotencyKey: idemKey } },
+      update: {
+        status: outcome.ok ? TaskStatus.COMPLETED : TaskStatus.FAILED,
+        vaultFinalizedAt: outcome.ok ? new Date() : null,
+      },
+      create: {
+        buyerId: payload.buyerId,
+        title,
+        mode: TaskMode.DISBURSE,
+        budget: total,
+        asset,
+        status: outcome.ok ? TaskStatus.COMPLETED : TaskStatus.FAILED,
+        vaultTaskId: payload.vaultTaskId ? BigInt(payload.vaultTaskId) : null,
+        vaultFinalizedAt: outcome.ok ? new Date() : null,
+        idempotencyKey: idemKey,
+      },
+    });
+
+    if (outcome.ok) {
+      for (let i = 0; i < n; i++) {
+        await prisma.payment.upsert({
+          where: { idempotencyKey: `${idemKey}-${i}` },
+          update: { status: PaymentStatus.CONFIRMED, txHash: outcome.txHash },
+          create: {
+            taskId: task.id,
+            fromAddress,
+            toAddress: payload.payees[i],
+            asset,
+            amount: amounts[i],
+            method: PaymentMethod.VAULT_RELEASE,
+            status: PaymentStatus.CONFIRMED,
+            txHash: outcome.txHash,
+            idempotencyKey: `${idemKey}-${i}`,
+          },
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn({ buyerId: payload.buyerId, err: String(err) }, 'batch activity log failed');
+  }
+}
+
 export async function settleBatch(
   prisma: PrismaClient,
   payload: BatchSettlePayload,
@@ -528,10 +597,12 @@ export async function settleBatch(
       { buyerId: payload.buyerId, txHash, legs: payload.payees.length },
       'batch settled (pp/2)',
     );
+    await recordBatchActivity(prisma, payload, { ok: true, txHash });
     return { status: 'settled', txHash, buyerId: payload.buyerId };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     logger.error({ buyerId: payload.buyerId, err: reason }, 'batch settlement failed');
+    await recordBatchActivity(prisma, payload, { ok: false, reason });
     // We roll back the lock on failure, so this is non-retryable on purpose: a
     // retry would lock a fresh task (vaultTaskId is null) and double-reserve the
     // budget. The owner re-submits a new proof instead.

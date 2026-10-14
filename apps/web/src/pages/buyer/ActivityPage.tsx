@@ -9,6 +9,8 @@ import {
   ExternalLink,
   Inbox,
   ShieldCheck,
+  ArrowDownToLine,
+  ArrowUpFromLine,
 } from 'lucide-react';
 import { getActivity, type ActivityItem, type ActivityKind } from '../../lib/activity';
 
@@ -19,6 +21,8 @@ const KIND_META: Record<ActivityKind, { icon: typeof Plus; label: string; tone: 
   task_failed: { icon: XCircle, label: 'Failed', tone: 'warn' },
   task_cancelled: { icon: Ban, label: 'Cancelled', tone: 'slate' },
   payment: { icon: Coins, label: 'Payment', tone: 'violet' },
+  deposit: { icon: ArrowDownToLine, label: 'Deposit', tone: 'good' },
+  withdraw: { icon: ArrowUpFromLine, label: 'Withdraw', tone: 'slate' },
 };
 
 function timeAgo(iso: string): string {

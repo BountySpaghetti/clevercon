@@ -31,6 +31,20 @@ export interface BatchSettlementJob {
   proof: { a: string; b: string; c: string };
 }
 
+/** The worker's SettleResult, as seen through the job's return value. */
+export interface BatchJobResult {
+  status: 'settled' | 'skipped' | 'failed';
+  txHash?: string;
+  reason?: string;
+  buyerId?: string;
+}
+
+export interface BatchJobStatus {
+  state: string; // BullMQ: waiting | active | completed | failed | delayed | ...
+  result: BatchJobResult | null;
+  failedReason?: string;
+}
+
 @Injectable()
 export class QueueService implements OnModuleDestroy {
   private readonly logger = new Logger(QueueService.name);
@@ -101,6 +115,26 @@ export class QueueService implements OnModuleDestroy {
     if (!connection) return null;
     if (!this.batchQueue) this.batchQueue = new Queue(BATCH_SETTLEMENT_QUEUE, { connection });
     return this.batchQueue;
+  }
+
+  /**
+   * Look up a batch-settlement job so the client can confirm the REAL on-chain
+   * outcome, not merely that the proof was relayed. Returns the BullMQ state and,
+   * once the worker has run, its result ({ status: settled|failed|skipped, txHash,
+   * reason }). Batch jobs are non-retryable on failure, so a `completed` state with
+   * `result.status !== 'settled'` is a final failure, not a pending retry.
+   */
+  async getBatchJob(jobId: string): Promise<BatchJobStatus | null> {
+    const queue = this.getBatchQueue();
+    if (!queue) return null;
+    const job = await queue.getJob(jobId);
+    if (!job) return null;
+    const state = await job.getState();
+    return {
+      state,
+      result: (job.returnvalue as BatchJobResult | undefined) ?? null,
+      failedReason: job.failedReason || undefined,
+    };
   }
 
   /**

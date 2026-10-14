@@ -15,7 +15,13 @@ import {
 import { getPolicies } from '../../lib/policies';
 import { getVault, getDelegate } from '../../lib/vault';
 import { describeSavedLimit, savedLimitBundleRules } from './limits-model';
-import { proveAndReleaseBatch, PROOF_WIDTH, MAX_RECIPIENTS } from '../../lib/prove';
+import {
+  proveAndReleaseBatch,
+  pollBatchJobs,
+  PROOF_WIDTH,
+  MAX_RECIPIENTS,
+  type BatchOutcome,
+} from '../../lib/prove';
 import type { PolicyBundleRules } from '@clevercon/agent-sdk/prover';
 
 // Persist the in-progress recipients + ceiling so navigating away and back does not
@@ -49,6 +55,10 @@ export function DisbursePage() {
   const [lines, setLines] = useState<Line[]>(draft?.lines ?? [{ payee: '', amount: '' }]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState<{ i: number; n: number } | null>(null);
+  // After relaying, we poll each job for its true on-chain outcome so the panel can
+  // say "Completed" / "Failed" instead of a premature "Accepted".
+  const [confirming, setConfirming] = useState(false);
+  const [settle, setSettle] = useState<BatchOutcome | null>(null);
   const { data: policies = [] } = useQuery({ queryKey: ['policies'], queryFn: getPolicies });
   const { data: vault } = useQuery({ queryKey: ['vault'], queryFn: getVault });
   const { data: delegate } = useQuery({ queryKey: ['delegate'], queryFn: getDelegate });
@@ -112,17 +122,27 @@ export function DisbursePage() {
           }
         },
       }),
-    onSuccess: () => {
+    onMutate: () => {
+      setSettle(null);
+      setConfirming(false);
+    },
+    onSuccess: async (data) => {
       // The batch was relayed; drop the saved draft so it doesn't persist a sent list.
       try {
         localStorage.removeItem(DRAFT_KEY);
       } catch {
         // ignore
       }
+      // Now confirm the REAL outcome on-chain before claiming success.
+      setConfirming(true);
+      const outcome = await pollBatchJobs(data.jobIds, { onProgress: setSettle });
+      setSettle(outcome);
+      setConfirming(false);
     },
     onError: () => {
       setPhase('idle');
       setProgress(null);
+      setConfirming(false);
     },
   });
 
@@ -441,26 +461,64 @@ export function DisbursePage() {
             })}
 
             {done && disburse.data ? (
-              <div className="cc-pop mt-1 rounded-xl bg-emerald-500/[0.07] p-3">
-                <div className="flex items-center justify-between">
-                  <span className="cc-pill cc-pill-good">
-                    <span className="cc-dot" /> Accepted
-                  </span>
-                  <span className="cc-num text-sm font-semibold text-white">
-                    {disburse.data.total.toFixed(2)} USDC
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-slate-400">
-                  Disbursing to {disburse.data.legs} recipient{disburse.data.legs > 1 ? 's' : ''}{' '}
-                  across {disburse.data.batches} proof{disburse.data.batches > 1 ? 's' : ''}.
-                </p>
-                <a
-                  href="/app/activity"
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
-                >
-                  Track in Activity <ExternalLink size={11} />
-                </a>
-              </div>
+              (() => {
+                const d = disburse.data;
+                const allOk = !!settle && settle.failed === 0 && settle.unconfirmed === 0;
+                const anyFailed = !!settle && settle.failed > 0;
+                const proofs = `${d.batches} proof${d.batches > 1 ? 's' : ''}`;
+                const people = `${d.legs} recipient${d.legs > 1 ? 's' : ''}`;
+                return (
+                  <div
+                    className={`cc-pop mt-1 rounded-xl p-3 ${
+                      !confirming && anyFailed
+                        ? 'bg-amber-500/[0.07]'
+                        : !confirming && allOk
+                          ? 'bg-emerald-500/[0.07]'
+                          : 'bg-white/[0.04]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`cc-pill ${!confirming && allOk ? 'cc-pill-good' : ''}`}>
+                        {confirming ? (
+                          <>
+                            <span className="cc-dot cc-breathe" /> Confirming on-chain…
+                          </>
+                        ) : allOk ? (
+                          <>
+                            <span className="cc-dot" /> Completed
+                          </>
+                        ) : anyFailed ? (
+                          'Some payouts failed'
+                        ) : (
+                          'Still settling'
+                        )}
+                      </span>
+                      <span className="cc-num text-sm font-semibold text-white">
+                        {d.total.toFixed(2)} USDC
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">
+                      {confirming
+                        ? `Verifying ${people} across ${proofs}${settle ? ` · ${settle.settled} settled` : ''}…`
+                        : allOk
+                          ? `Paid ${people} across ${proofs}, verified on-chain.`
+                          : anyFailed
+                            ? `${settle!.settled} of ${proofs} settled, ${settle!.failed} failed. Funds for failed payouts stay safe in your vault.`
+                            : `Relayed ${people}. Still settling; the Activity feed will show the final result.`}
+                    </p>
+                    {!confirming && anyFailed && settle!.reasons.length > 0 && (
+                      <p className="mt-1 text-[11px] text-amber-300">{settle!.reasons[0]}</p>
+                    )}
+                    <a
+                      href="/app/activity"
+                      className="mt-2 inline-flex items-center gap-1 text-xs text-violet-300 hover:text-violet-200"
+                    >
+                      {!confirming && allOk ? 'View in Activity' : 'Track in Activity'}{' '}
+                      <ExternalLink size={11} />
+                    </a>
+                  </div>
+                );
+              })()
             ) : (
               <p className="mt-1 text-[11px] text-slate-500">
                 First proof fetches the circuit (~37MB, cached after). Each proof takes a few

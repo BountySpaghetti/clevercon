@@ -1,4 +1,4 @@
-import { apiPost } from './api';
+import { apiGet, apiPost } from './api';
 import {
   createBatchProof,
   policyWitnessFromBundle,
@@ -123,4 +123,77 @@ export async function proveAndReleaseBatch(opts: {
   }
   onPhase?.('done');
   return { jobIds, total: sum, legs: active.length, batches: groups.length };
+}
+
+interface BatchJobStatus {
+  state: string;
+  result: { status: 'settled' | 'skipped' | 'failed'; txHash?: string; reason?: string } | null;
+  failedReason?: string;
+}
+
+export interface BatchOutcome {
+  settled: number;
+  failed: number;
+  /** Jobs we could not confirm before the deadline (still settling, or evicted). */
+  unconfirmed: number;
+  txHashes: string[];
+  reasons: string[];
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Relaying a proof is not the same as it settling on-chain, and a release can fail
+ * after it is accepted. This polls each batch job for its TRUE outcome so the UI can
+ * report "Completed" / "Failed" honestly instead of a premature "Accepted". Batch
+ * jobs are non-retryable, so a `completed` state is always final. Jobs still pending
+ * at the deadline are reported as `unconfirmed` (the Activity feed is the source of
+ * truth once the worker finishes).
+ */
+export async function pollBatchJobs(
+  jobIds: string[],
+  opts?: { timeoutMs?: number; intervalMs?: number; onProgress?: (o: BatchOutcome) => void },
+): Promise<BatchOutcome> {
+  const timeoutMs = opts?.timeoutMs ?? 90_000;
+  const intervalMs = opts?.intervalMs ?? 2500;
+  const deadline = Date.now() + timeoutMs;
+  const done = new Map<string, { ok: boolean; txHash?: string; reason?: string }>();
+
+  const summarize = (): BatchOutcome => {
+    let settled = 0;
+    let failed = 0;
+    const txHashes: string[] = [];
+    const reasons: string[] = [];
+    for (const r of done.values()) {
+      if (r.ok) {
+        settled++;
+        if (r.txHash) txHashes.push(r.txHash);
+      } else {
+        failed++;
+        if (r.reason) reasons.push(r.reason);
+      }
+    }
+    return { settled, failed, unconfirmed: jobIds.length - done.size, txHashes, reasons };
+  };
+
+  while (done.size < jobIds.length && Date.now() < deadline) {
+    for (const id of jobIds) {
+      if (done.has(id)) continue;
+      try {
+        const j = await apiGet<BatchJobStatus>(`/vault/batch-job/${encodeURIComponent(id)}`);
+        if (j.state === 'completed') {
+          if (j.result?.status === 'settled') done.set(id, { ok: true, txHash: j.result.txHash });
+          else done.set(id, { ok: false, reason: j.result?.reason ?? 'settlement failed' });
+        } else if (j.state === 'failed') {
+          done.set(id, { ok: false, reason: j.failedReason ?? 'settlement failed' });
+        }
+        // waiting | active | delayed | unknown: not terminal yet, keep polling.
+      } catch {
+        // transient (network/401 refresh); retry on the next tick.
+      }
+    }
+    opts?.onProgress?.(summarize());
+    if (done.size < jobIds.length) await sleep(intervalMs);
+  }
+  return summarize();
 }

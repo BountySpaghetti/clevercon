@@ -7,7 +7,9 @@ export type ActivityKind =
   | 'task_completed'
   | 'task_failed'
   | 'task_cancelled'
-  | 'payment';
+  | 'payment'
+  | 'deposit'
+  | 'withdraw';
 
 export interface ActivityItem {
   id: string;
