@@ -2,6 +2,9 @@ import { isDemo } from '../config';
 import { apiFetch } from './api';
 import { demoServices } from './demo';
 
+/** Settlement-gated trust tier, earned by real on-chain settled jobs. */
+export type TrustTier = 'new' | 'active' | 'trusted';
+
 export interface Service {
   id: string;
   name: string;
@@ -10,6 +13,14 @@ export interface Service {
   pricePerCall: number;
   rating: number;
   provider: string;
+  /** Trust earned by real on-chain settlements (anti-spam, our discovery primitive). */
+  trust: TrustTier;
+  /** Count of real settled jobs behind the trust tier. */
+  settlements: number;
+  /** Curated: a service we vouch for. */
+  verified: boolean;
+  /** How the service charges: x402 one-shot or MPP metered. */
+  pricingModel: string;
 }
 
 interface ApiService {
@@ -19,10 +30,13 @@ interface ApiService {
   category: string | null;
   pricePerCall: number;
   pricingModel: string;
+  trust?: TrustTier;
+  settlements?: number;
+  verified?: boolean;
   reputation: { score: number } | null;
 }
 
-export type ServiceSort = 'recent' | 'rating' | 'price_asc' | 'price_desc';
+export type ServiceSort = 'trust' | 'recent' | 'rating' | 'price_asc' | 'price_desc';
 
 export interface ServiceQuery {
   q?: string;
@@ -46,12 +60,17 @@ function mapApiService(s: ApiService): Service {
     pricePerCall: s.pricePerCall,
     rating: s.reputation?.score ?? 0,
     provider: s.pricingModel === 'MPP' ? 'streaming' : 'per-call',
+    trust: s.trust ?? 'new',
+    settlements: s.settlements ?? 0,
+    verified: !!s.verified,
+    pricingModel: s.pricingModel,
   };
 }
 
 function sortClient(list: Service[], sort: ServiceSort): Service[] {
   const sorted = [...list];
-  if (sort === 'rating') sorted.sort((a, b) => b.rating - a.rating);
+  if (sort === 'trust') sorted.sort((a, b) => b.settlements - a.settlements || b.rating - a.rating);
+  else if (sort === 'rating') sorted.sort((a, b) => b.rating - a.rating);
   else if (sort === 'price_asc') sorted.sort((a, b) => a.pricePerCall - b.pricePerCall);
   else if (sort === 'price_desc') sorted.sort((a, b) => b.pricePerCall - a.pricePerCall);
   // 'recent' keeps the source order.
@@ -64,7 +83,7 @@ function sortClient(list: Service[], sort: ServiceSort): Service[] {
  * demo list client-side so the UI behaves identically.
  */
 export async function getServices(params: ServiceQuery = {}): Promise<ServicePage> {
-  const { q = '', category, sort = 'recent', limit = 12, offset = 0 } = params;
+  const { q = '', category, sort = 'trust', limit = 12, offset = 0 } = params;
   if (isDemo()) {
     let list: Service[] = demoServices.map((d) => ({
       id: d.id,
@@ -74,6 +93,10 @@ export async function getServices(params: ServiceQuery = {}): Promise<ServicePag
       pricePerCall: d.pricePerCall,
       rating: d.rating,
       provider: d.provider,
+      trust: d.rating >= 4.5 ? 'trusted' : d.rating >= 3 ? 'active' : 'new',
+      settlements: Math.round(d.rating * 7),
+      verified: d.rating >= 4.7,
+      pricingModel: d.provider === 'streaming' ? 'MPP' : 'X402',
     }));
     if (category && category !== 'All') list = list.filter((s) => s.category === category);
     if (q) {
@@ -125,6 +148,9 @@ export async function getService(id: string): Promise<ServiceDetail> {
       pricePerCall: d.pricePerCall,
       rating: d.rating,
       provider: d.provider,
+      trust: 'trusted',
+      settlements: 30,
+      verified: true,
       capabilities: ['demo-capability'],
       pricingModel: 'X402',
       currency: 'USDC',
@@ -143,6 +169,9 @@ export async function getService(id: string): Promise<ServiceDetail> {
     pricePerCall: s.pricePerCall,
     rating: s.reputation?.score ?? 0,
     provider: s.pricingModel === 'MPP' ? 'streaming' : 'per-call',
+    trust: s.trust ?? 'new',
+    settlements: s.settlements ?? 0,
+    verified: !!s.verified,
     capabilities: s.capabilities ?? [],
     pricingModel: s.pricingModel,
     currency: s.currency,

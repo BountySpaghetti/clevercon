@@ -23,6 +23,10 @@ import {
   Eye,
   EyeOff,
   Fingerprint,
+  BadgeCheck,
+  Zap,
+  Award,
+  Lock,
 } from 'lucide-react';
 import { isDemo } from '../../config';
 import { useSession } from '../../store/session';
@@ -903,6 +907,7 @@ export function ProveReleaseCard() {
 // ── Marketplace ───────────────────────────────────────────────────────────────
 
 const SORT_OPTIONS: { value: ServiceSort; label: string }[] = [
+  { value: 'trust', label: 'Most trusted' },
   { value: 'recent', label: 'Most recent' },
   { value: 'rating', label: 'Top rated' },
   { value: 'price_asc', label: 'Price: low to high' },
@@ -910,6 +915,29 @@ const SORT_OPTIONS: { value: ServiceSort; label: string }[] = [
 ];
 
 const PAGE_SIZE = 12;
+
+/**
+ * Settlement-gated trust: the tier is earned by real on-chain settled jobs, so a
+ * freshly listed service stays `new` until it proves itself. This is the directory's
+ * anti-spam primitive and its trust signal in one.
+ */
+function TrustBadge({ trust, settlements }: { trust: string; settlements: number }) {
+  if (trust === 'trusted')
+    return (
+      <Badge className="border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
+        <Award size={11} /> Trusted · {settlements} settled
+      </Badge>
+    );
+  if (trust === 'active')
+    return (
+      <Badge className="border-violet-500/25 bg-violet-500/10 text-violet-300">
+        <CheckCircle2 size={11} /> {settlements} settled
+      </Badge>
+    );
+  return (
+    <Badge className="border-white/10 bg-white/[0.04] text-slate-400">New · unproven</Badge>
+  );
+}
 
 export function Marketplace() {
   const [q, setQ] = useState('');
@@ -949,8 +977,23 @@ export function Marketplace() {
 
   return (
     <Card className="p-0">
-      <CardHeader icon={Search} title="Marketplace" hint="Hire AI agents, humans, and businesses" />
+      <CardHeader
+        icon={Search}
+        title="Marketplace"
+        hint="Discover services your agent can pay, trust earned on-chain"
+      />
       <div className="p-5 pt-4">
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-violet-500/20 bg-violet-500/[0.06] p-3">
+          <span className="mt-0.5 text-violet-300">
+            <Lock size={15} />
+          </span>
+          <p className="text-xs leading-relaxed text-slate-300">
+            Your agent discovers and pays these under a{' '}
+            <span className="font-medium text-white">private, on-chain-enforced spending policy</span>
+            . Ranking is <span className="font-medium text-white">settlement-gated</span>: trust is
+            earned by real settled jobs, so listing is open but the directory stays proven.
+          </p>
+        </div>
         <div className="flex flex-wrap gap-2">
           <input
             value={q}
@@ -996,20 +1039,31 @@ export function Marketplace() {
             <Link
               key={s.id}
               to={`/app/marketplace/${s.id}`}
-              className="rounded-xl bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-colors"
+              className="rounded-xl border border-white/[0.04] bg-white/[0.03] p-4 transition-colors hover:border-white/10 hover:bg-white/[0.06]"
             >
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{s.name}</span>
-                <Badge className="border-amber-500/25 bg-amber-500/10 text-amber-300">
+              <div className="flex items-start justify-between gap-2">
+                <span className="flex items-center gap-1.5 font-medium">
+                  {s.name}
+                  {s.verified && (
+                    <span title="Verified by CleverCon" className="text-sky-300">
+                      <BadgeCheck size={14} />
+                    </span>
+                  )}
+                </span>
+                <Badge className="shrink-0 border-amber-500/25 bg-amber-500/10 text-amber-300">
                   <Star size={11} /> {s.rating.toFixed(1)}
                 </Badge>
               </div>
-              <p className="mt-1 text-sm text-slate-400">{s.description}</p>
-              <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                <span>
-                  {s.category} · {s.provider}
-                </span>
-                <span className="text-slate-300">${s.pricePerCall}/call</span>
+              <p className="mt-1 line-clamp-2 text-sm text-slate-400">{s.description}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <TrustBadge trust={s.trust} settlements={s.settlements} />
+                <Badge className="border-white/10 bg-white/[0.04] text-slate-300">
+                  <Zap size={11} /> {s.pricingModel === 'MPP' ? 'metered' : 'x402'}
+                </Badge>
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-line pt-2.5 text-xs text-slate-500">
+                <span>{s.category ?? 'Uncategorized'}</span>
+                <span className="cc-num text-slate-300">${s.pricePerCall}/call</span>
               </div>
             </Link>
           ))}

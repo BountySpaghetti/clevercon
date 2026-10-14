@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Star, Zap, Clock, Briefcase } from 'lucide-react';
+import { ArrowLeft, Star, Zap, Clock, Briefcase, BadgeCheck, Award, Lock } from 'lucide-react';
 import { getService } from '../lib/services';
 import { createTask } from '../lib/tasks';
 
@@ -38,6 +38,9 @@ function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: s
       <h2 className="font-semibold text-slate-300">Hire this service</h2>
       <p className="mt-1 text-sm text-slate-400">
         Creates a direct job you can track in your buyer console.
+      </p>
+      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-violet-300">
+        <Lock size={12} /> Paid from your vault under your private, on-chain-enforced policy.
       </p>
       <input
         value={budget}
@@ -83,9 +86,25 @@ export function ServiceDetail() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-bold">{service.name}</h1>
+              {service.verified && (
+                <span className="inline-flex items-center gap-1 text-sm text-sky-300">
+                  <BadgeCheck size={15} /> Verified
+                </span>
+              )}
               <span className="inline-flex items-center gap-1 text-sm text-amber-300">
                 <Star size={14} /> {service.rating.toFixed(1)}
               </span>
+              {service.trust === 'trusted' && (
+                <span className="inline-flex items-center gap-1 text-sm text-emerald-300">
+                  <Award size={14} /> Trusted · {service.settlements} settled
+                </span>
+              )}
+              {service.trust === 'active' && (
+                <span className="text-sm text-violet-300">{service.settlements} settled</span>
+              )}
+              {service.trust === 'new' && (
+                <span className="text-sm text-slate-500">New · unproven</span>
+              )}
             </div>
             <p className="mt-1 text-slate-400">{service.description}</p>
             <p className="mt-1 text-sm text-slate-500">
@@ -96,7 +115,7 @@ export function ServiceDetail() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { icon: Zap, label: 'Price / call', value: `$${service.pricePerCall}` },
-              { icon: Briefcase, label: 'Jobs', value: String(service.totalJobs) },
+              { icon: Briefcase, label: 'Settled jobs', value: String(service.settlements) },
               { icon: Star, label: 'Rating', value: service.rating.toFixed(1) },
               {
                 icon: Clock,
