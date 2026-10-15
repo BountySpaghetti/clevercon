@@ -462,6 +462,7 @@ model Dispute {
   payoutToProvider Decimal?      @db.Decimal(20, 7)
   judgeVerdict     Json? // LLM-judge output recorded during the dispute window
   tier             String? // snapshot of the service's tier at dispute time
+  providerResponse String? // the provider's reply/evidence to the dispute
   createdAt        DateTime      @default(now())
   resolvedAt       DateTime?
 

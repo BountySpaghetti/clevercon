@@ -49,6 +49,9 @@ export const envSchema = z.object({
   // Vault admin key (the address passed to the vault's init). Lets the operator
   // console read + set the protocol fee and view accrued fees. KMS in prod.
   VAULT_ADMIN_KEY: z.string().optional(),
+  // Platform dispute-resolver secret (S...). Must also be registered on the vault
+  // via set_dispute_resolver. Enables POST /disputes/:id/resolve.
+  DISPUTE_RESOLVER_SECRET: z.string().optional(),
   // At-rest encryption key for per-user delegate secrets (32-byte hex or base64;
   // KMS in production). When set, the platform can provision per-user spending
   // delegates and automatic settlement is enabled; when unset, tasks run

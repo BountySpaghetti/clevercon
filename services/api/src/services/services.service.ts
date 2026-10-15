@@ -27,8 +27,16 @@ export type TrustTier = 'new' | 'active' | 'trusted';
 // `trusted` requires distinct paying counterparties (uniquePayers), so a provider
 // cannot self-deal its way up by paying itself: each fake settlement costs real
 // USDC and does not add a new payer. This is the core anti-Sybil defense.
-function trustTier(settlements: number, score: number, uniquePayers: number): TrustTier {
-  if (settlements >= 10 && score >= 4 && uniquePayers >= 2) return 'trusted';
+function trustTier(
+  settlements: number,
+  score: number,
+  uniquePayers: number,
+  disputesUpheld: number,
+  totalJobs: number,
+): TrustTier {
+  const disputeRate = totalJobs > 0 ? disputesUpheld / totalJobs : 0;
+  if (disputeRate > 0.2) return 'new'; // a high upheld-dispute rate sinks any service
+  if (settlements >= 10 && score >= 4 && uniquePayers >= 2 && disputeRate < 0.05) return 'trusted';
   if (settlements >= 1) return 'active';
   return 'new';
 }
@@ -68,6 +76,8 @@ function serialize(s: ServiceWithRep, verified: Set<string>, stat?: PayerStat) {
   const settlements = s.reputation?.successfulJobs ?? 0;
   const score = s.reputation?.score ?? 0;
   const uniquePayers = stat?.payers ?? 0;
+  const disputesUpheld = s.reputation?.disputesUpheld ?? 0;
+  const totalJobs = s.reputation?.totalJobs ?? 0;
   return {
     id: s.id,
     agentId: s.agentId,
@@ -90,7 +100,7 @@ function serialize(s: ServiceWithRep, verified: Set<string>, stat?: PayerStat) {
     inputSchema: s.inputSchema ?? null,
     // Settlement-gated trust, surfaced for the marketplace: the trust level, the
     // count of real settled jobs, and whether we've curated/vouched for it.
-    trust: trustTier(settlements, score, uniquePayers),
+    trust: trustTier(settlements, score, uniquePayers, disputesUpheld, totalJobs),
     settlements,
     // Distinct paying counterparties (anti-self-dealing) + recency, from real
     // confirmed settlements. Computed read-side for now; move to an incremented

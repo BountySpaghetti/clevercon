@@ -40,6 +40,7 @@ export class VaultContractService {
   private readonly rpcUrl: string;
   private readonly usdcSac: string;
   private readonly adminKey: string;
+  private readonly resolverSecret: string;
   readonly passphrase: string;
   readonly active: boolean;
   /** The deployed vault contract id, or '' when not configured. */
@@ -57,6 +58,7 @@ export class VaultContractService {
     this.rpcUrl = config.get('STELLAR_RPC_URL', { infer: true });
     this.usdcSac = config.get('USDC_SAC', { infer: true }) ?? '';
     this.adminKey = config.get('VAULT_ADMIN_KEY', { infer: true }) ?? '';
+    this.resolverSecret = config.get('DISPUTE_RESOLVER_SECRET', { infer: true }) ?? '';
     this.passphrase = config.get('NETWORK_PASSPHRASE', { infer: true });
     this.active = this.contractId.length > 10 && !this.contractId.startsWith('C...');
     if (!this.active) {
@@ -122,6 +124,33 @@ export class VaultContractService {
       new Address(userAddress).toScVal(),
       nativeToScVal(vaultTaskId, { type: 'u64' }),
     ]);
+  }
+
+  /**
+   * Resolve a disputed task on-chain, signed by the platform dispute-resolver key.
+   * Splits the still-locked remainder (the vault enforces refund + payout ==
+   * plan_cost - spent). Needs DISPUTE_RESOLVER_SECRET set here AND that key
+   * registered on the vault via `set_dispute_resolver` by the admin.
+   */
+  async resolveDisputeOnChain(
+    vaultTaskId: bigint,
+    refundToUserUsdc: number,
+    payoutToProviderUsdc: number,
+  ): Promise<string> {
+    this.ensureActive();
+    if (!this.resolverSecret) {
+      throw new ServiceUnavailableException('DISPUTE_RESOLVER_SECRET is not configured');
+    }
+    const kp = Keypair.fromSecret(this.resolverSecret);
+    const unsigned = await this.buildUnsignedXdr(kp.publicKey(), 'resolve_dispute', [
+      new Address(kp.publicKey()).toScVal(),
+      nativeToScVal(vaultTaskId, { type: 'u64' }),
+      nativeToScVal(usdcToStroops(refundToUserUsdc), { type: 'i128' }),
+      nativeToScVal(usdcToStroops(payoutToProviderUsdc), { type: 'i128' }),
+    ]);
+    const tx = TransactionBuilder.fromXDR(unsigned, this.passphrase);
+    tx.sign(kp);
+    return this.submitSignedXdr(tx.toXDR());
   }
 
   /** Unsigned `withdraw(user, usdc_sac, amount)` XDR; fails on-chain if over available. */

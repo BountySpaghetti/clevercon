@@ -66,6 +66,71 @@ export class DisputesService {
     if (!d || d.task?.buyerId !== userId) throw new NotFoundException('Dispute not found');
     return serialize(d);
   }
+
+  /** A provider on the disputed task posts their reply/evidence (the fairness side). */
+  async respond(userId: string, id: string, response: string) {
+    const d = await this.prisma.dispute.findUnique({
+      where: { id },
+      include: {
+        task: { include: { steps: { select: { service: { select: { providerId: true } } } } } },
+      },
+    });
+    if (!d) throw new NotFoundException('Dispute not found');
+    const owns = d.task?.steps.some((s) => s.service?.providerId === userId) ?? false;
+    if (!owns) throw new ForbiddenException('not a provider on this disputed task');
+    await this.prisma.dispute.update({ where: { id }, data: { providerResponse: response } });
+    return { ok: true };
+  }
+
+  /**
+   * Arbiter settles a dispute: signs resolve_dispute on-chain (splits the locked
+   * remainder; the vault enforces refund + payout == plan_cost - spent), records
+   * the outcome, and weighs it into the task's services' reputation (an upheld
+   * dispute counts heavier). Admin only.
+   */
+  async resolve(
+    id: string,
+    params: { refundToUser: number; payoutToProvider: number; upheld: boolean; resolution?: string },
+  ) {
+    const d = await this.prisma.dispute.findUnique({
+      where: { id },
+      include: { task: { select: { vaultTaskId: true, steps: { select: { serviceId: true } } } } },
+    });
+    if (!d) throw new NotFoundException('Dispute not found');
+    if (d.status !== DisputeStatus.OPEN) throw new BadRequestException('dispute already resolved');
+    if (d.task?.vaultTaskId == null) throw new BadRequestException('task has no on-chain id');
+    if (params.refundToUser < 0 || params.payoutToProvider < 0) {
+      throw new BadRequestException('amounts must be non-negative');
+    }
+
+    const txHash = await this.contract.resolveDisputeOnChain(
+      BigInt(d.task.vaultTaskId),
+      params.refundToUser,
+      params.payoutToProvider,
+    );
+    await this.prisma.dispute.update({
+      where: { id },
+      data: {
+        status: params.upheld ? DisputeStatus.RESOLVED : DisputeStatus.REJECTED,
+        resolution: params.resolution ?? null,
+        refundToUser: params.refundToUser,
+        payoutToProvider: params.payoutToProvider,
+        resolvedAt: new Date(),
+      },
+    });
+    const serviceIds = [
+      ...new Set(d.task.steps.map((s) => s.serviceId).filter((x): x is string => !!x)),
+    ];
+    for (const serviceId of serviceIds) {
+      await this.prisma.serviceReputation
+        .update({
+          where: { serviceId },
+          data: { disputes: { increment: 1 }, disputesUpheld: { increment: params.upheld ? 1 : 0 } },
+        })
+        .catch(() => {});
+    }
+    return { ok: true, txHash };
+  }
 }
 
 type DisputeRow = {
