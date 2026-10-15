@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DollarSign, Briefcase, Star, Boxes, Plus } from 'lucide-react';
+import { DollarSign, Briefcase, Star, Boxes, Plus, Flag } from 'lucide-react';
 import {
   getProviderServices,
   getProviderEarnings,
   getProviderJobs,
+  getProviderDisputes,
+  respondToDispute,
   registerService,
   setServiceStatus,
   type RegisterServiceInput,
@@ -476,6 +478,83 @@ export function Provider() {
         <ServicesCard />
         <JobsCard />
       </div>
+      <DisputesCard />
     </section>
+  );
+}
+
+function statusTone(status: string): string {
+  if (status === 'OPEN') return 'text-amber-300';
+  if (status === 'RESOLVED') return 'text-emerald-300';
+  return 'text-slate-400';
+}
+
+function DisputesCard() {
+  const qc = useQueryClient();
+  const {
+    data: disputes = [],
+    isLoading,
+    error,
+  } = useQuery({ queryKey: ['provider-disputes'], queryFn: getProviderDisputes });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const respond = useMutation({
+    mutationFn: ({ id, response }: { id: string; response: string }) => respondToDispute(id, response),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['provider-disputes'] }),
+  });
+
+  return (
+    <Card className="p-5">
+      <CardHeader
+        icon={Flag}
+        title="Disputes"
+        hint="Disputes on tasks that used your services. Respond with your evidence."
+      />
+      <div className="px-5 pb-5">
+        {isLoading ? (
+          <Loading rows={2} />
+        ) : error ? (
+          <ErrorState>Could not load disputes.</ErrorState>
+        ) : disputes.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">No disputes. Good standing.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {disputes.map((d) => (
+              <div key={d.id} className="rounded-xl bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">{d.task ?? d.taskId}</span>
+                  <span className={`text-xs font-semibold ${statusTone(d.status)}`}>{d.status}</span>
+                </div>
+                {d.reason && <p className="mt-1 text-sm text-slate-400">Buyer: {d.reason}</p>}
+                {d.providerResponse ? (
+                  <p className="mt-1 text-sm text-slate-300">Your response: {d.providerResponse}</p>
+                ) : d.status === 'OPEN' ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const r = (drafts[d.id] ?? '').trim();
+                      if (r) respond.mutate({ id: d.id, response: r });
+                    }}
+                    className="mt-2 flex gap-2"
+                  >
+                    <input
+                      value={drafts[d.id] ?? ''}
+                      onChange={(e) => setDrafts((s) => ({ ...s, [d.id]: e.target.value }))}
+                      placeholder="Your evidence or response"
+                      className={controls.field}
+                    />
+                    <button type="submit" disabled={respond.isPending} className={controls.primary}>
+                      Respond
+                    </button>
+                  </form>
+                ) : null}
+                {d.resolution && (
+                  <p className="mt-1 text-xs text-slate-500">Resolution: {d.resolution}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }

@@ -45,6 +45,12 @@ export class DisputesController {
     return this.disputes.list(user.userId);
   }
 
+  /** The provider's dispute inbox: disputes on tasks that use their services. */
+  @Get('provider')
+  forProvider(@CurrentUser() user: AuthUser) {
+    return this.disputes.listForProvider(user.userId);
+  }
+
   @Get(':id')
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.disputes.get(user.userId, id);

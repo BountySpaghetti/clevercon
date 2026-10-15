@@ -62,6 +62,17 @@ export class DisputesService {
     return rows.map(serialize);
   }
 
+  /** Disputes on tasks that use one of this provider's services (their inbox). */
+  async listForProvider(userId: string) {
+    const rows = await this.prisma.dispute.findMany({
+      where: { task: { steps: { some: { service: { providerId: userId } } } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: { task: { select: { title: true } } },
+    });
+    return rows.map(serialize);
+  }
+
   async get(userId: string, id: string) {
     const d = await this.prisma.dispute.findUnique({
       where: { id },
@@ -143,6 +154,7 @@ type DisputeRow = {
   status: DisputeStatus;
   reason: string | null;
   resolution: string | null;
+  providerResponse: string | null;
   createdAt: Date;
   resolvedAt: Date | null;
   task: { title: string } | null;
@@ -156,6 +168,7 @@ function serialize(d: DisputeRow) {
     status: d.status,
     reason: d.reason,
     resolution: d.resolution,
+    providerResponse: d.providerResponse,
     createdAt: d.createdAt.toISOString(),
     resolvedAt: d.resolvedAt?.toISOString() ?? null,
   };

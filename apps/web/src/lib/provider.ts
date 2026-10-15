@@ -60,6 +60,30 @@ export async function getProviderServices(): Promise<ProviderServiceItem[]> {
   }));
 }
 
+export interface ProviderDispute {
+  id: string;
+  taskId: string;
+  task: string | null;
+  status: string;
+  reason: string | null;
+  resolution: string | null;
+  providerResponse: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+/** Disputes on tasks that use this provider's services (their inbox). */
+export async function getProviderDisputes(): Promise<ProviderDispute[]> {
+  if (isDemo()) return [];
+  return apiFetch('/disputes/provider');
+}
+
+/** Post the provider's reply/evidence to a dispute. */
+export async function respondToDispute(id: string, response: string): Promise<{ ok: boolean }> {
+  if (isDemo()) return { ok: true };
+  return apiPost(`/disputes/${id}/respond`, { response });
+}
+
 export interface RegisterServiceInput {
   name: string;
   description: string;
