@@ -9,6 +9,12 @@ export interface ProviderServiceItem {
   pricePerCall: number;
   status: string;
   rating: number;
+  tier: string;
+  trust: string;
+  settlements: number;
+  uniquePayers: number;
+  disputes: number;
+  disputesUpheld: number;
 }
 
 export interface ProviderJob {
@@ -34,10 +40,16 @@ interface ApiProviderService {
   category: string | null;
   pricePerCall: number;
   status: string;
+  tier?: string;
+  trust?: string;
+  settlements?: number;
+  uniquePayers?: number;
+  disputes?: number;
+  disputesUpheld?: number;
   reputation: { score: number } | null;
 }
 
-/** The provider's own services: demo data in demo mode, the live API otherwise. */
+/** The provider's own services with their trust signals: demo in demo mode, else the API. */
 export async function getProviderServices(): Promise<ProviderServiceItem[]> {
   if (isDemo()) {
     return demoServices.map((s) => ({
@@ -47,6 +59,12 @@ export async function getProviderServices(): Promise<ProviderServiceItem[]> {
       pricePerCall: s.pricePerCall,
       status: 'ACTIVE',
       rating: s.rating,
+      tier: 'T2',
+      trust: s.rating >= 4.5 ? 'trusted' : 'active',
+      settlements: Math.round(s.rating * 7),
+      uniquePayers: 3,
+      disputes: 0,
+      disputesUpheld: 0,
     }));
   }
   const res = await apiFetch<{ items: ApiProviderService[] }>('/provider/services');
@@ -57,6 +75,12 @@ export async function getProviderServices(): Promise<ProviderServiceItem[]> {
     pricePerCall: s.pricePerCall,
     status: s.status,
     rating: s.reputation?.score ?? 0,
+    tier: s.tier ?? 'T2',
+    trust: s.trust ?? 'new',
+    settlements: s.settlements ?? 0,
+    uniquePayers: s.uniquePayers ?? 0,
+    disputes: s.disputes ?? 0,
+    disputesUpheld: s.disputesUpheld ?? 0,
   }));
 }
 
@@ -110,17 +134,11 @@ export async function registerService(input: RegisterServiceInput): Promise<Prov
       pricePerCall: input.pricePerCall,
       status: 'ACTIVE',
       rating: 0,
+      ...DEMO_TRUST,
+      tier: input.tier ?? 'T2',
     };
   }
-  const s = await apiPost<ApiProviderService>('/provider/services', input);
-  return {
-    id: s.id,
-    name: s.name,
-    category: s.category,
-    pricePerCall: s.pricePerCall,
-    status: s.status,
-    rating: s.reputation?.score ?? 0,
-  };
+  return mapService(await apiPost<ApiProviderService>('/provider/services', input));
 }
 
 export interface UpdateServiceInput {
@@ -133,6 +151,15 @@ export interface UpdateServiceInput {
   stellarAddress?: string;
 }
 
+const DEMO_TRUST = {
+  tier: 'T2',
+  trust: 'new',
+  settlements: 0,
+  uniquePayers: 0,
+  disputes: 0,
+  disputesUpheld: 0,
+};
+
 function mapService(s: ApiProviderService): ProviderServiceItem {
   return {
     id: s.id,
@@ -141,6 +168,12 @@ function mapService(s: ApiProviderService): ProviderServiceItem {
     pricePerCall: s.pricePerCall,
     status: s.status,
     rating: s.reputation?.score ?? 0,
+    tier: s.tier ?? 'T2',
+    trust: s.trust ?? 'new',
+    settlements: s.settlements ?? 0,
+    uniquePayers: s.uniquePayers ?? 0,
+    disputes: s.disputes ?? 0,
+    disputesUpheld: s.disputesUpheld ?? 0,
   };
 }
 
@@ -158,6 +191,7 @@ export async function updateService(
       pricePerCall: input.pricePerCall ?? s.pricePerCall,
       status: 'ACTIVE',
       rating: s.rating,
+      ...DEMO_TRUST,
     };
   }
   return mapService(await apiPatch<ApiProviderService>(`/provider/services/${id}`, input));
@@ -174,6 +208,7 @@ export async function setServiceStatus(id: string, active: boolean): Promise<Pro
       pricePerCall: s.pricePerCall,
       status: active ? 'ACTIVE' : 'INACTIVE',
       rating: s.rating,
+      ...DEMO_TRUST,
     };
   }
   return mapService(

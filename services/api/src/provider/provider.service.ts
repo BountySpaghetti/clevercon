@@ -80,7 +80,27 @@ function toAgentId(name: string): string {
 
 type ServiceWithRep = Prisma.ServiceGetPayload<{ include: { reputation: true } }>;
 
-function serializeService(s: ServiceWithRep) {
+/** Same settlement-gated, anti-self-dealing tier the public directory uses. */
+function trustTier(
+  settlements: number,
+  score: number,
+  uniquePayers: number,
+  disputesUpheld: number,
+  totalJobs: number,
+): 'new' | 'active' | 'trusted' {
+  const disputeRate = totalJobs > 0 ? disputesUpheld / totalJobs : 0;
+  if (disputeRate > 0.2) return 'new';
+  if (settlements >= 10 && score >= 4 && uniquePayers >= 2 && disputeRate < 0.05) return 'trusted';
+  if (settlements >= 1) return 'active';
+  return 'new';
+}
+
+function serializeService(s: ServiceWithRep, uniquePayers = 0) {
+  const rep = s.reputation;
+  const settlements = rep?.successfulJobs ?? 0;
+  const score = rep?.score ?? 0;
+  const totalJobs = rep?.totalJobs ?? 0;
+  const disputesUpheld = rep?.disputesUpheld ?? 0;
   return {
     id: s.id,
     agentId: s.agentId,
@@ -91,8 +111,14 @@ function serializeService(s: ServiceWithRep) {
     status: s.status,
     tier: s.tier,
     verification: s.verification ?? null,
-    reputation: s.reputation
-      ? { score: s.reputation.score, totalJobs: s.reputation.totalJobs }
+    // The provider's own trust view: how they rank and why.
+    trust: trustTier(settlements, score, uniquePayers, disputesUpheld, totalJobs),
+    settlements,
+    uniquePayers,
+    disputes: rep?.disputes ?? 0,
+    disputesUpheld,
+    reputation: rep
+      ? { score: rep.score, totalJobs: rep.totalJobs, avgLatencyMs: rep.avgLatencyMs }
       : null,
   };
 }
@@ -255,7 +281,29 @@ export class ProviderService {
       include: { reputation: true },
       orderBy: { registeredAt: 'desc' },
     });
-    return { items: rows.map(serializeService), total: rows.length };
+    // Distinct paying counterparties per service (anti-self-dealing signal), from
+    // real CONFIRMED settlements. Best-effort: never fail the list over the stats.
+    const payers = new Map<string, number>();
+    const ids = rows.map((r) => r.id);
+    if (ids.length) {
+      try {
+        const stats = await this.prisma.$queryRaw<{ sid: string; payers: bigint }[]>`
+          SELECT ts."serviceId" AS sid, COUNT(DISTINCT t."buyerId") AS payers
+          FROM "payments" p
+          JOIN "task_steps" ts ON p."stepId" = ts.id
+          JOIN "tasks" t ON p."taskId" = t.id
+          WHERE p.status = 'CONFIRMED' AND ts."serviceId" IN (${Prisma.join(ids)})
+          GROUP BY ts."serviceId"
+        `;
+        for (const s of stats) payers.set(s.sid, Number(s.payers));
+      } catch {
+        // degrade to zero unique payers
+      }
+    }
+    return {
+      items: rows.map((r) => serializeService(r, payers.get(r.id) ?? 0)),
+      total: rows.length,
+    };
   }
 
   /**

@@ -378,6 +378,27 @@ function ServicesCard() {
                   <div className="min-w-0">
                     <div className="truncate font-medium">{s.name}</div>
                     <div className="text-xs text-slate-500">{s.category ?? 'Uncategorised'}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-500">
+                      <span
+                        className={
+                          s.trust === 'trusted'
+                            ? 'font-semibold text-emerald-300'
+                            : s.trust === 'active'
+                              ? 'font-semibold text-violet-300'
+                              : 'text-slate-500'
+                        }
+                      >
+                        {s.trust === 'trusted' ? 'Trusted' : s.trust === 'active' ? 'Active' : 'New'}
+                      </span>
+                      <span>{s.tier}</span>
+                      <span>{s.settlements} settled</span>
+                      <span>{s.uniquePayers} payers</span>
+                      {s.disputes > 0 && (
+                        <span className="text-amber-300">
+                          {s.disputesUpheld}/{s.disputes} disputes upheld
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right text-xs">
