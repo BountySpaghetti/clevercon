@@ -24,10 +24,18 @@ export interface ListParams {
  * open (anyone can register) without the directory filling with unproven noise.
  */
 export type TrustTier = 'new' | 'active' | 'trusted';
-function trustTier(settlements: number, score: number): TrustTier {
-  if (settlements >= 10 && score >= 4) return 'trusted';
+// `trusted` requires distinct paying counterparties (uniquePayers), so a provider
+// cannot self-deal its way up by paying itself: each fake settlement costs real
+// USDC and does not add a new payer. This is the core anti-Sybil defense.
+function trustTier(settlements: number, score: number, uniquePayers: number): TrustTier {
+  if (settlements >= 10 && score >= 4 && uniquePayers >= 2) return 'trusted';
   if (settlements >= 1) return 'active';
   return 'new';
+}
+
+interface PayerStat {
+  payers: number;
+  lastSettled: Date | null;
 }
 
 /** Curated services we vouch for, by registry agent_id (comma-separated env). */
@@ -56,9 +64,10 @@ const SORT_ORDER: Record<ServiceSort, Prisma.ServiceOrderByWithRelationInput[]> 
   price_desc: [{ pricePerCall: 'desc' }],
 };
 
-function serialize(s: ServiceWithRep, verified: Set<string>) {
+function serialize(s: ServiceWithRep, verified: Set<string>, stat?: PayerStat) {
   const settlements = s.reputation?.successfulJobs ?? 0;
   const score = s.reputation?.score ?? 0;
+  const uniquePayers = stat?.payers ?? 0;
   return {
     id: s.id,
     agentId: s.agentId,
@@ -81,8 +90,13 @@ function serialize(s: ServiceWithRep, verified: Set<string>) {
     inputSchema: s.inputSchema ?? null,
     // Settlement-gated trust, surfaced for the marketplace: the trust level, the
     // count of real settled jobs, and whether we've curated/vouched for it.
-    trust: trustTier(settlements, score),
+    trust: trustTier(settlements, score, uniquePayers),
     settlements,
+    // Distinct paying counterparties (anti-self-dealing) + recency, from real
+    // confirmed settlements. Computed read-side for now; move to an incremented
+    // column if the directory volume grows.
+    uniquePayers,
+    lastSettled: stat?.lastSettled ?? null,
     verified: verified.has(s.agentId),
     reputation: s.reputation
       ? {
@@ -97,6 +111,35 @@ function serialize(s: ServiceWithRep, verified: Set<string>) {
 @Injectable()
 export class ServicesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Distinct paying counterparties and last-settled time per service, from real
+   * CONFIRMED settlements (payments joined through steps to the service). Only
+   * service-hire payments carry a stepId, so disburses are naturally excluded.
+   * Best-effort: never fail a listing over a stats query.
+   */
+  private async payerStats(ids: string[]): Promise<Map<string, PayerStat>> {
+    const map = new Map<string, PayerStat>();
+    if (ids.length === 0) return map;
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { sid: string; payers: bigint; last: Date | null }[]
+      >`
+        SELECT ts."serviceId" AS sid,
+               COUNT(DISTINCT t."buyerId") AS payers,
+               MAX(p."createdAt") AS last
+        FROM "payments" p
+        JOIN "task_steps" ts ON p."stepId" = ts.id
+        JOIN "tasks" t ON p."taskId" = t.id
+        WHERE p.status = 'CONFIRMED' AND ts."serviceId" IN (${Prisma.join(ids)})
+        GROUP BY ts."serviceId"
+      `;
+      for (const r of rows) map.set(r.sid, { payers: Number(r.payers), lastSettled: r.last });
+    } catch {
+      // degrade to zero stats rather than break the directory
+    }
+    return map;
+  }
 
   async list(params: ListParams) {
     const where: Prisma.ServiceWhereInput = {
@@ -120,7 +163,13 @@ export class ServicesService {
       this.prisma.service.findMany({ where, include: { reputation: true }, orderBy, take, skip }),
       this.prisma.service.count({ where }),
     ]);
-    return { items: rows.map((r) => serialize(r, verified)), total, limit: take, offset: skip };
+    const stats = await this.payerStats(rows.map((r) => r.id));
+    return {
+      items: rows.map((r) => serialize(r, verified, stats.get(r.id))),
+      total,
+      limit: take,
+      offset: skip,
+    };
   }
 
   async get(id: string) {
@@ -129,6 +178,7 @@ export class ServicesService {
       include: { reputation: true },
     });
     if (!s) throw new NotFoundException('Service not found');
-    return serialize(s, verifiedAgentIds());
+    const stats = await this.payerStats([s.id]);
+    return serialize(s, verifiedAgentIds(), stats.get(s.id));
   }
 }
