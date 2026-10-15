@@ -8,7 +8,8 @@ import { SERVICE_BY_ACTION, SERVICES } from './services.js';
  * result envelope, which the worker verifies against the service's declared tier
  * before the vault pays. One endpoint, many services (see services.ts).
  */
-const PORT = Number(process.env.PROVIDER_PORT ?? 4200);
+// Railway assigns the public port via PORT; fall back to PROVIDER_PORT/4200 locally.
+const PORT = Number(process.env.PORT ?? process.env.PROVIDER_PORT ?? 4200);
 const NAME = process.env.PROVIDER_NAME ?? 'clevercon-reference-provider';
 
 const provider = createProvider({
