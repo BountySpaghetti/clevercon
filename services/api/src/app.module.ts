@@ -12,6 +12,7 @@ import { TasksModule } from './tasks/tasks.module.js';
 import { ProviderModule } from './provider/provider.module.js';
 import { PoliciesModule } from './policies/policies.module.js';
 import { ActivityModule } from './activity/activity.module.js';
+import { DisputesModule } from './disputes/disputes.module.js';
 import { AgentModule } from './agent/agent.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
@@ -43,6 +44,7 @@ import { AppLoggerModule } from './logging/logger.module.js';
     ProviderModule,
     PoliciesModule,
     ActivityModule,
+    DisputesModule,
     AgentModule,
     AdminModule,
     WebhooksModule,

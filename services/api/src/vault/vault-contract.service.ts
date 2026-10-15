@@ -115,6 +115,15 @@ export class VaultContractService {
     ]);
   }
 
+  /** Unsigned `raise_dispute(user, task_id)` XDR; the buyer signs to freeze the task on-chain. */
+  async buildRaiseDisputeXdr(userAddress: string, vaultTaskId: bigint): Promise<string> {
+    this.ensureActive();
+    return this.buildUnsignedXdr(userAddress, 'raise_dispute', [
+      new Address(userAddress).toScVal(),
+      nativeToScVal(vaultTaskId, { type: 'u64' }),
+    ]);
+  }
+
   /** Unsigned `withdraw(user, usdc_sac, amount)` XDR; fails on-chain if over available. */
   async buildWithdrawXdr(userAddress: string, amountUsdc: number): Promise<string> {
     this.ensureActive();
