@@ -69,6 +69,11 @@ export interface RegisterServiceInput {
   pricePerCall: number;
   endpoint: string;
   stellarAddress: string;
+  // Acceptance contract (optional): how delivery is judged before payment.
+  tier?: 'T1' | 'T2' | 'T3';
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  verification?: { method: string; spec?: Record<string, unknown> };
 }
 
 /** Register a service (grants PROVIDER). Demo returns a local stand-in. */

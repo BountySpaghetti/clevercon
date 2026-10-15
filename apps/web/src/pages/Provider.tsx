@@ -7,6 +7,7 @@ import {
   getProviderJobs,
   registerService,
   setServiceStatus,
+  type RegisterServiceInput,
 } from '../lib/provider';
 import { refreshRoles } from '../lib/sessionSync';
 import {
@@ -97,18 +98,16 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
   const [endpoint, setEndpoint] = useState('');
   const [address, setAddress] = useState('');
   const [pricingModel, setPricingModel] = useState<'X402' | 'MPP'>('X402');
+  // Acceptance contract: how delivery is judged before you are paid.
+  const [tier, setTier] = useState<'T1' | 'T2' | 'T3'>('T2');
+  const [vmethod, setVmethod] = useState<string>('onchain');
+  const [specJson, setSpecJson] = useState('');
+  const [inJson, setInJson] = useState('');
+  const [outJson, setOutJson] = useState('');
+  const [jsonErr, setJsonErr] = useState<string | null>(null);
 
   const reg = useMutation({
-    mutationFn: () =>
-      registerService({
-        name: name.trim(),
-        description: description.trim(),
-        category: category.trim() || undefined,
-        pricingModel,
-        pricePerCall: Number(price),
-        endpoint: endpoint.trim(),
-        stellarAddress: address.trim(),
-      }),
+    mutationFn: (input: RegisterServiceInput) => registerService(input),
     onSuccess: async () => {
       await refreshRoles();
       qc.invalidateQueries({ queryKey: ['provider-services'] });
@@ -136,11 +135,44 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
   const hint = (bad: boolean, msg: string) =>
     bad ? <p className="mt-1 text-xs text-red-400">{msg}</p> : null;
 
+  // Build the full registration input, parsing the optional acceptance-contract
+  // JSON. Returns null (and sets an error) if any JSON is malformed.
+  const buildInput = (): RegisterServiceInput | null => {
+    let spec: Record<string, unknown> | undefined;
+    let inputSchema: Record<string, unknown> | undefined;
+    let outputSchema: Record<string, unknown> | undefined;
+    try {
+      spec = specJson.trim() ? JSON.parse(specJson) : undefined;
+      inputSchema = inJson.trim() ? JSON.parse(inJson) : undefined;
+      outputSchema = outJson.trim() ? JSON.parse(outJson) : undefined;
+    } catch {
+      setJsonErr('One of the acceptance-contract fields is not valid JSON.');
+      return null;
+    }
+    setJsonErr(null);
+    const method = tier === 'T2' ? 'attest' : tier === 'T3' ? 'manual' : vmethod;
+    return {
+      name: name.trim(),
+      description: description.trim(),
+      category: category.trim() || undefined,
+      pricingModel,
+      pricePerCall: Number(price),
+      endpoint: endpoint.trim(),
+      stellarAddress: address.trim(),
+      tier,
+      verification: { method, spec },
+      inputSchema,
+      outputSchema,
+    };
+  };
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSubmit) reg.mutate();
+        if (!canSubmit) return;
+        const input = buildInput();
+        if (input) reg.mutate(input);
       }}
       className="mt-4 space-y-3 rounded-xl bg-black/20 p-4"
     >
@@ -211,6 +243,73 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
           <option value="MPP">MPP (metered)</option>
         </select>
       </div>
+
+      <div className="space-y-2 rounded-lg border border-white/10 bg-black/20 p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+          How your delivery is verified (buyers pay only once it passes)
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value as 'T1' | 'T2' | 'T3')}
+            className={controls.field}
+            aria-label="Verification tier"
+          >
+            <option value="T1">T1 Verifiable (trustless)</option>
+            <option value="T2">T2 Attestable (schema + dispute)</option>
+            <option value="T3">T3 Human (approval/milestone)</option>
+          </select>
+          {tier === 'T1' && (
+            <select
+              value={vmethod}
+              onChange={(e) => setVmethod(e.target.value)}
+              className={controls.field}
+              aria-label="Verification method"
+            >
+              <option value="onchain">onchain (re-derived on-chain)</option>
+              <option value="witness">witness (re-checked by a predicate)</option>
+              <option value="content-hash">content-hash</option>
+              <option value="signature">signature</option>
+            </select>
+          )}
+        </div>
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          T1 is paid only when the worker/chain re-checks your result (most trusted). T2 pays on the
+          declared result shape with a dispute window. T3 waits for your buyer&apos;s approval.
+        </p>
+        <details className="text-xs text-slate-400">
+          <summary className="cursor-pointer select-none text-slate-300">
+            Advanced: verifier + result shape (JSON, optional)
+          </summary>
+          <div className="mt-2 space-y-2">
+            <textarea
+              value={specJson}
+              onChange={(e) => setSpecJson(e.target.value)}
+              placeholder={'Verifier spec, e.g. {"predicate":"sha256"} or {"signerKey":"G..."}'}
+              className={`${controls.field} font-mono`}
+              rows={2}
+            />
+            <textarea
+              value={inJson}
+              onChange={(e) => setInJson(e.target.value)}
+              placeholder={
+                'Input JSON Schema, e.g. {"type":"object","required":["data"],"properties":{"data":{"type":"string"}}}'
+              }
+              className={`${controls.field} font-mono`}
+              rows={2}
+            />
+            <textarea
+              value={outJson}
+              onChange={(e) => setOutJson(e.target.value)}
+              placeholder={'Output JSON Schema, e.g. {"type":"object","required":["sha256"]}'}
+              className={`${controls.field} font-mono`}
+              rows={2}
+            />
+          </div>
+        </details>
+        {jsonErr && <p className="text-xs text-red-400">{jsonErr}</p>}
+      </div>
+
       <div className="flex items-center gap-3">
         <button type="submit" disabled={!canSubmit} className={controls.primary}>
           {reg.isPending ? 'Registering…' : 'Register service'}
