@@ -73,6 +73,12 @@ function serialize(s: ServiceWithRep, verified: Set<string>) {
     status: s.status,
     // The service's verification tier (T1 trustless / T2 attestable / T3 human).
     tier: s.tier,
+    // The public acceptance contract: how delivery is judged (method + spec) and
+    // the result shape. Public by design so a buyer/agent can verify trustlessly
+    // (SDK verifyResult) rather than trusting the provider or the server.
+    verification: s.verification ?? null,
+    outputSchema: s.outputSchema ?? null,
+    inputSchema: s.inputSchema ?? null,
     // Settlement-gated trust, surfaced for the marketplace: the trust level, the
     // count of real settled jobs, and whether we've curated/vouched for it.
     trust: trustTier(settlements, score),
