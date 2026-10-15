@@ -30,6 +30,16 @@ function getKit(): Promise<StellarWalletsKit> {
   return kitPromise;
 }
 
+/**
+ * Warm the wallet-kit chunk (a ~280KB gzip lazy chunk) ahead of the first connect,
+ * e.g. while the landing page sits idle, so clicking "Connect wallet" does not pay
+ * a cold download. Safe to call repeatedly: the kit promise is memoised and errors
+ * are swallowed (it is only a prefetch).
+ */
+export function preloadWallet(): void {
+  void getKit().catch(() => {});
+}
+
 /** Ensure the kit has a wallet selected (re-applying the persisted choice). */
 function ensureWallet(kit: StellarWalletsKit): void {
   const id = typeof localStorage !== 'undefined' ? localStorage.getItem(WALLET_ID_KEY) : null;

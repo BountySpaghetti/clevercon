@@ -11,9 +11,61 @@
       content="CleverCon: a non-custodial, private spending-control layer and agent economy for AI agents on Stellar."
     />
     <title>CleverCon</title>
+    <!-- Critical, inline CSS so the first paint is instant and dark (no white
+         flash on mobile) and a boot loader shows while the app bundle parses.
+         React clears #root on mount, which removes the loader automatically. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0b0d13;
+        color: #e7e9ee;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      #cc-boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #0b0d13;
+      }
+      #cc-boot .mark {
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #8b5cf6, #4338ca);
+        box-shadow: 0 12px 34px rgba(76, 29, 149, 0.45);
+      }
+      #cc-boot .ring {
+        width: 22px;
+        height: 22px;
+        border: 2.5px solid rgba(255, 255, 255, 0.16);
+        border-top-color: #a78bfa;
+        border-radius: 50%;
+        animation: cc-spin 0.7s linear infinite;
+      }
+      @keyframes cc-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #cc-boot .ring {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="cc-boot" aria-hidden="true">
+        <div class="mark"></div>
+        <div class="ring"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

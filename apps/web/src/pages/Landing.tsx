@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { preloadWallet } from '../lib/wallet';
 import {
   Shield,
   Store,
@@ -322,6 +323,24 @@ export function Landing() {
     const onScroll = () => setScrolled(window.scrollY > 8);
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // While the landing sits idle, warm the wallet-kit chunk so the first
+  // "Connect wallet" after "Launch app" is instant rather than a cold download.
+  useEffect(() => {
+    // Typed as optional so the runtime fallback compiles (older mobile Safari
+    // predates requestIdleCallback); the DOM lib otherwise types it as always present.
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    const warm = () => void preloadWallet();
+    const hasRic = typeof w.requestIdleCallback === 'function';
+    const id = hasRic ? w.requestIdleCallback!(warm, { timeout: 2500 }) : window.setTimeout(warm, 1500);
+    return () => {
+      if (hasRic && w.cancelIdleCallback) w.cancelIdleCallback(id);
+      else window.clearTimeout(id);
+    };
   }, []);
 
   return (
