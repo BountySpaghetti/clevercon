@@ -199,6 +199,13 @@ model Service {
   healthCheck    String?
   manifestHash   String? // hash mirrored from the on-chain registry
   status         ServiceStatus @default(NEW)
+  // Acceptance contract (marketplace economy). See .local/MARKETPLACE-ECONOMY-SPEC.md.
+  tier            String   @default("T2") // T1 verifiable | T2 attestable | T3 subjective
+  inputSchema     Json? // JSON Schema for the request input
+  outputSchema    Json? // JSON Schema for the result
+  verification    Json? // { method, spec } for how delivery is judged
+  bondAmount      Decimal  @default(0) @db.Decimal(20, 7) // optional slashable stake (phased)
+  manifestVersion Int      @default(1) // bumped on edits; anti bait-and-switch
   registeredAt   DateTime      @default(now())
   lastSeen       DateTime?
   updatedAt      DateTime      @updatedAt
@@ -206,6 +213,7 @@ model Service {
   provider   User?              @relation("ProviderServices", fields: [providerId], references: [id])
   reputation ServiceReputation?
   steps      TaskStep[]
+  bonds      ServiceBond[]
 
   @@index([providerId])
   @@index([category])
@@ -220,11 +228,34 @@ model ServiceReputation {
   failedJobs     Int      @default(0)
   avgQuality     Float    @default(0)
   avgLatencyMs   Int      @default(0)
+  // Marketplace trust signals: distinct paying counterparties (anti-self-dealing),
+  // recency, and dispute history. See MARKETPLACE-ECONOMY-SPEC.md sections 6-7.
+  uniquePayers   Int      @default(0)
+  lastSettled    DateTime?
+  disputes       Int      @default(0)
+  disputesUpheld Int      @default(0)
   lastUpdated    DateTime @updatedAt
 
   service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@map("service_reputation")
+}
+
+// A provider's optional slashable stake (phased, P3). Unused until bonds ship;
+// defined now so the relation exists. See MARKETPLACE-ECONOMY-SPEC.md section 7.
+model ServiceBond {
+  id         String   @id @default(cuid())
+  serviceId  String
+  amount     Decimal  @db.Decimal(20, 7)
+  status     String   @default("ACTIVE") // ACTIVE | SLASHED | WITHDRAWN
+  lockTxHash String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceId])
+  @@map("service_bonds")
 }
 
 // ── Tasks & execution ────────────────────────────────────────────────────────
@@ -428,6 +459,8 @@ model Dispute {
   resolution       String?
   refundToUser     Decimal?      @db.Decimal(20, 7)
   payoutToProvider Decimal?      @db.Decimal(20, 7)
+  judgeVerdict     Json? // LLM-judge output recorded during the dispute window
+  tier             String? // snapshot of the service's tier at dispute time
   createdAt        DateTime      @default(now())
   resolvedAt       DateTime?
 
