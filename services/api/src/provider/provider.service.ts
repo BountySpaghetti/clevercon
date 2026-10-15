@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma, PaymentStatus, PricingModel, Role, ServiceStatus } from '@clevercon/db';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RegistryContractService } from './registry-contract.service.js';
+import { issuePayoutChallenge, verifyPayoutOwnership } from './payout-proof.js';
 
 const ZERO = new Prisma.Decimal(0);
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -51,6 +52,8 @@ export interface RegisterServiceParams {
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   verification?: { method: string; spec?: Record<string, unknown> };
+  /** Proof of control over a payout address that is not the caller's own wallet. */
+  payoutProof?: { challenge: string; signature: string };
 }
 
 /** Fields a provider may edit after registration. All optional (partial update). */
@@ -106,7 +109,28 @@ export class ProviderService {
    * atomically (self-serve onboarding, mirrors API-key -> DEVELOPER). The
    * service goes live immediately with a fresh (zeroed) reputation row.
    */
+  /** Issue a payout-ownership challenge for the caller to sign with the payout key. */
+  payoutChallenge(userId: string): string {
+    return issuePayoutChallenge(userId);
+  }
+
   async registerService(userId: string, params: RegisterServiceParams) {
+    // Ownership: the payout address must be the caller's own wallet, or proven via
+    // a signed challenge, so a service cannot list an address it does not control.
+    const owned = await this.prisma.wallet.findFirst({
+      where: { userId, address: params.stellarAddress },
+      select: { id: true },
+    });
+    if (!owned) {
+      if (!params.payoutProof) {
+        throw new BadRequestException(
+          'payout address is not your wallet; sign a GET /provider/payout-challenge and pass it as payoutProof',
+        );
+      }
+      const proof = verifyPayoutOwnership(params.stellarAddress, params.payoutProof, userId);
+      if (!proof.ok) throw new BadRequestException(`payout ownership proof failed: ${proof.reason}`);
+    }
+
     const created = await this.prisma.$transaction(async (tx) => {
       const service = await tx.service.create({
         data: {

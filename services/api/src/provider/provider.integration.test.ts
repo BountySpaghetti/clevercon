@@ -48,8 +48,20 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
     await prisma.payment.deleteMany();
     await prisma.task.deleteMany();
     await prisma.service.deleteMany();
+    await prisma.wallet.deleteMany();
     await prisma.user.deleteMany();
   });
+
+  // Register with a wallet the user owns, so the payout-ownership check passes
+  // (registration requires the payout address to be the caller's wallet or proven).
+  async function registerOwned(
+    userId: string,
+    params: { stellarAddress: string } & Record<string, unknown>,
+  ) {
+    await prisma.wallet.create({ data: { userId, address: params.stellarAddress } }).catch(() => {});
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return provider.registerService(userId, params as any);
+  }
 
   it('lists only the provider own services', async () => {
     const me = await prisma.user.create({ data: {} });
@@ -105,7 +117,7 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
 
   it('registers a service, grants PROVIDER, and makes it visible to the owner', async () => {
     const me = await prisma.user.create({ data: {} });
-    const svc = await provider.registerService(me.id, {
+    const svc = await registerOwned(me.id, {
       name: 'My Oracle',
       description: 'live data',
       category: 'Data & Oracles',
@@ -137,7 +149,7 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
     const me = await prisma.user.create({ data: {} });
     const other = await prisma.user.create({ data: {} });
     const buyer = await prisma.user.create({ data: {} });
-    const mySvc = await provider.registerService(me.id, {
+    const mySvc = await registerOwned(me.id, {
       name: 'My Svc',
       description: 'd',
       pricingModel: 'X402',
@@ -145,7 +157,7 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
       endpoint: 'https://m.example.com',
       stellarAddress: 'GMYSVC',
     });
-    const theirSvc = await provider.registerService(other.id, {
+    const theirSvc = await registerOwned(other.id, {
       name: 'Their Svc',
       description: 'd',
       pricingModel: 'X402',
@@ -196,7 +208,7 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
   it('updates a service the caller owns and rejects editing another provider service', async () => {
     const me = await prisma.user.create({ data: {} });
     const other = await prisma.user.create({ data: {} });
-    const svc = await provider.registerService(me.id, {
+    const svc = await registerOwned(me.id, {
       name: 'Orig',
       description: 'orig desc',
       pricingModel: 'X402',
@@ -226,7 +238,7 @@ describe.skipIf(!DB)('Provider (integration, real Postgres)', () => {
   it('pauses and resumes a service (owner-scoped), toggling marketplace visibility', async () => {
     const me = await prisma.user.create({ data: {} });
     const other = await prisma.user.create({ data: {} });
-    const svc = await provider.registerService(me.id, {
+    const svc = await registerOwned(me.id, {
       name: 'Pausable',
       description: 'desc',
       pricingModel: 'X402',

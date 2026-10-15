@@ -36,6 +36,9 @@ const registerSchema = z
     inputSchema: jsonSchemaObj.optional(),
     outputSchema: jsonSchemaObj.optional(),
     verification: verificationSchema.optional(),
+    // Required only when the payout address is not the caller's own wallet: a
+    // signature by that address's key over a challenge from GET /payout-challenge.
+    payoutProof: z.object({ challenge: z.string(), signature: z.string() }).optional(),
   })
   .refine(
     (o) => !o.tier || !o.verification || TIER_METHODS[o.tier].includes(o.verification.method),
@@ -61,6 +64,16 @@ const statusSchema = z.object({ active: z.boolean() });
 @UseGuards(JwtAuthGuard)
 export class ProviderController {
   constructor(private readonly provider: ProviderService) {}
+
+  /**
+   * A short-lived challenge to prove control of a payout address: sign the
+   * returned string with that address's key and pass it as `payoutProof` to
+   * register, when the payout address is not your own wallet.
+   */
+  @Get('payout-challenge')
+  payoutChallenge(@CurrentUser() user: AuthUser) {
+    return { challenge: this.provider.payoutChallenge(user.userId) };
+  }
 
   /** Register a service (self-serve); grants the caller the PROVIDER role. */
   @Post('services')
