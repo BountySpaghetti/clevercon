@@ -325,6 +325,7 @@ model TaskStep {
   serviceId     String?
   payee         String? // direct recipient for PAY/DISBURSE steps (no provider)
   action        String
+  input         Json? // structured job input (validated against the service's inputSchema)
   dependsOn     Int[]      @default([])
   estimatedCost Decimal    @db.Decimal(20, 7)
   status        StepStatus @default(PENDING)

@@ -1,4 +1,12 @@
 import { type PrismaClient, StepStatus, TaskStatus } from '@clevercon/db';
+import {
+  validateSchema,
+  verifyDelivery,
+  type JobRequestEnvelope,
+  type JobResultEnvelope,
+  type VerificationSpec,
+  type JsonSchema,
+} from '@clevercon/common';
 import { enqueueSettlement } from './queue.js';
 import { finalizeTaskIfComplete } from './settlement.js';
 
@@ -39,6 +47,31 @@ export function isAcceptableOutput(output: string): boolean {
     // Non-JSON, non-empty text is acceptable (e.g. a plain string result).
   }
   return true;
+}
+
+/**
+ * Normalize a provider response into the standard JobResultEnvelope. New providers
+ * return the envelope directly; older ones return a bare value (JSON or text),
+ * which we wrap so the acceptance pipeline is uniform. Back-compat is preserved:
+ * a provider built before the envelope still settles exactly as before.
+ */
+export function parseResultEnvelope(text: string): JobResultEnvelope {
+  const trimmed = text.trim();
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.ok === 'boolean' &&
+      (typeof parsed.issuedAt === 'number' || typeof parsed.contentType === 'string')
+    ) {
+      return parsed as unknown as JobResultEnvelope;
+    }
+    return { ok: true, contentType: 'application/json', data: parsed, issuedAt: now };
+  } catch {
+    return { ok: trimmed.length > 0, contentType: 'text/plain', data: trimmed, issuedAt: now };
+  }
 }
 
 /**
@@ -132,21 +165,55 @@ export async function executeTask(
     }
 
     const started = Date.now();
+    const input = (step.input as Record<string, unknown> | null) ?? {};
+    const request: JobRequestEnvelope = {
+      jobId: step.id,
+      taskId,
+      stepId: step.id,
+      action: step.action,
+      input,
+      replyFormat: 'json',
+      deadline: Math.floor(Date.now() / 1000) + Math.ceil(STEP_TIMEOUT_MS / 1000),
+      idempotencyKey: `${taskId}:${step.id}`,
+    };
     try {
       const res = await fetchImpl(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: step.action, taskId }),
+        // action/taskId stay top-level for pre-envelope providers; the rest is additive.
+        body: JSON.stringify(request),
         signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
       });
       const latencyMs = Date.now() - started;
       if (!res.ok) throw new Error(`provider returned HTTP ${res.status}`);
-      const output = (await res.text()).slice(0, 2000);
-      if (!isAcceptableOutput(output))
+      const rawText = (await res.text()).slice(0, 8000);
+      // Acceptance pipeline: delivery gate -> schema check -> tier verification.
+      const envelope = parseResultEnvelope(rawText);
+      if (!envelope.ok)
+        throw new Error(envelope.error ? `provider error: ${envelope.error}` : 'provider delivery rejected');
+      if (!isAcceptableOutput(rawText))
         throw new Error('provider output rejected (acceptance check)');
+      const outputSchema = step.service?.outputSchema as JsonSchema | null | undefined;
+      if (outputSchema) {
+        const schemaCheck = validateSchema(envelope.data, outputSchema);
+        if (!schemaCheck.ok) throw new Error(`schema check failed: ${schemaCheck.reason}`);
+      }
+      const verification = step.service?.verification as VerificationSpec | null | undefined;
+      if (step.service?.tier === 'T1' && verification) {
+        // Trustless gate: a T1 service is paid only if the declared check passes.
+        // `deferred` (onchain without a worker-side deriver) passes here; the buyer
+        // agent verifies it trustlessly before accepting.
+        const v = await verifyDelivery(verification, input, envelope);
+        if (!v.ok) throw new Error(`verification failed: ${v.reason}`);
+      }
+      const storedOutput = (
+        typeof envelope.data === 'string'
+          ? envelope.data
+          : JSON.stringify(envelope.data ?? envelope.artifact ?? '')
+      ).slice(0, 2000);
       await prisma.taskStep.update({
         where: { id: step.id },
-        data: { status: StepStatus.RELEASED, output, latencyMs, error: null },
+        data: { status: StepStatus.RELEASED, output: storedOutput, latencyMs, error: null },
       });
       if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
       // If the task is locked on-chain under a policy, settle this step (pay the

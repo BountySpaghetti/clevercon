@@ -1,12 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { executeTask, isAcceptableOutput } from './executor.js';
 
+interface Service {
+  endpoint: string;
+  tier?: string;
+  verification?: { method: string; spec?: Record<string, unknown> } | null;
+  outputSchema?: Record<string, unknown> | null;
+}
 interface Step {
   id: string;
   index: number;
   action: string;
   status: string;
-  service: { endpoint: string } | null;
+  service: Service | null;
+  serviceId?: string | null;
+  input?: Record<string, unknown> | null;
   output?: string | null;
   error?: string | null;
   latencyMs?: number | null;
@@ -150,6 +158,59 @@ describe('executeTask', () => {
     expect(res.status).toBe('failed');
     expect(task.steps[0].status).toBe('FAILED');
     expect(task.steps[0].error).toContain('acceptance');
+  });
+
+  function oneStep(id: string, service: Service, input: Record<string, unknown> = {}): Task {
+    return {
+      id,
+      status: 'PENDING',
+      steps: [{ id: 's1', index: 0, action: 'x', status: 'PENDING', service, input }],
+    };
+  }
+
+  it('fails a step whose result violates the service output schema', async () => {
+    const task = oneStep('t7', {
+      endpoint: 'https://svc.test',
+      outputSchema: { type: 'object', required: ['price'] },
+    });
+    const bad = vi.fn(async () => new Response(JSON.stringify({ nope: 1 }), { status: 200 }));
+    const res = await executeTask(mockPrisma(task), bad as unknown as typeof fetch, 't7');
+    expect(res.status).toBe('failed');
+    expect(task.steps[0].error).toContain('schema');
+  });
+
+  it('releases a T1 step when the witness verifier passes and fails it when it does not', async () => {
+    const service: Service = {
+      endpoint: 'https://svc.test',
+      tier: 'T1',
+      verification: { method: 'witness', spec: { predicate: 'product' } },
+    };
+    // Correct factors for n=15: an envelope the worker re-checks trustlessly.
+    const good = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ok: true, contentType: 'application/json', data: { a: 3, b: 5 }, issuedAt: 1 }),
+          { status: 200 },
+        ),
+    );
+    const passTask = oneStep('t8', service, { n: 15 });
+    expect((await executeTask(mockPrisma(passTask), good as unknown as typeof fetch, 't8')).status).toBe(
+      'completed',
+    );
+    expect(passTask.steps[0].status).toBe('RELEASED');
+
+    const bad = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ ok: true, contentType: 'application/json', data: { a: 3, b: 4 }, issuedAt: 1 }),
+          { status: 200 },
+        ),
+    );
+    const failTask = oneStep('t9', service, { n: 15 });
+    expect((await executeTask(mockPrisma(failTask), bad as unknown as typeof fetch, 't9')).status).toBe(
+      'failed',
+    );
+    expect(failTask.steps[0].error).toContain('verification');
   });
 });
 

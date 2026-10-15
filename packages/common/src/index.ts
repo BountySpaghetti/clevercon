@@ -1,5 +1,6 @@
 export * from './types.js';
 export * from './service-manifest.js';
+export * from './service-verify.js';
 export * from './constants.js';
 export * from './logger.js';
 export * from './wallet.js';
