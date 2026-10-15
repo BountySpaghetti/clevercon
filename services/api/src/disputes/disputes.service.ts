@@ -45,7 +45,11 @@ export class DisputesService {
     });
     // The buyer signs this and submits it (POST /vault/submit) to freeze the task.
     const xdr = await this.contract.buildRaiseDisputeXdr(wallet.address, BigInt(task.vaultTaskId));
-    return { dispute: { id: dispute.id, taskId, status: dispute.status }, xdr };
+    return {
+      dispute: { id: dispute.id, taskId, status: dispute.status },
+      xdr,
+      networkPassphrase: this.contract.passphrase,
+    };
   }
 
   async list(userId: string) {

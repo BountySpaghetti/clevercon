@@ -1,5 +1,6 @@
 import { isDemo } from '../config';
 import { apiFetch, apiPost } from './api';
+import { signTransaction } from './wallet';
 
 export interface Task {
   id: string;
@@ -224,10 +225,40 @@ export async function planInstruction(instruction: string): Promise<AgentPlanRes
 }
 
 /** Raise a dispute on one of the caller's tasks. */
+/**
+ * Open a dispute on a hired task. The server records it and returns the
+ * `raise_dispute` XDR; the buyer signs it and the API submits it, which FREEZES
+ * the task on-chain (no further release or completion) until a resolver settles
+ * it. The locked budget is the escrow, so nothing is clawed back.
+ */
 export async function raiseDispute(
   taskId: string,
   reason?: string,
 ): Promise<{ id: string; status: string }> {
   if (isDemo()) return { id: 'dispute-' + Date.now(), status: 'OPEN' };
-  return apiPost<{ id: string; status: string }>(`/tasks/${taskId}/dispute`, { reason });
+  const built = await apiPost<{
+    dispute: { id: string; status: string };
+    xdr: string;
+    networkPassphrase: string;
+  }>('/disputes', { taskId, reason });
+  const signedXdr = await signTransaction(built.xdr, built.networkPassphrase);
+  await apiPost<{ txHash: string }>('/vault/submit', { signedXdr });
+  return built.dispute;
+}
+
+/** The buyer's disputes, newest first. */
+export async function getDisputes(): Promise<
+  {
+    id: string;
+    taskId: string;
+    task: string | null;
+    status: string;
+    reason: string | null;
+    resolution: string | null;
+    createdAt: string;
+    resolvedAt: string | null;
+  }[]
+> {
+  if (isDemo()) return [];
+  return apiFetch('/disputes');
 }
