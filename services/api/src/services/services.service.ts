@@ -70,8 +70,10 @@ function serialize(s: ServiceWithRep, verified: Set<string>) {
     currency: s.currency,
     endpoint: s.endpoint,
     status: s.status,
-    // Settlement-gated trust, surfaced for the marketplace: the tier, the count
-    // of real settled jobs, and whether we've curated/vouched for it.
+    // The service's verification tier (T1 trustless / T2 attestable / T3 human).
+    tier: s.tier,
+    // Settlement-gated trust, surfaced for the marketplace: the trust level, the
+    // count of real settled jobs, and whether we've curated/vouched for it.
     trust: trustTier(settlements, score),
     settlements,
     verified: verified.has(s.agentId),

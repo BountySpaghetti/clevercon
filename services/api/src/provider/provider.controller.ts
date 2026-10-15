@@ -7,16 +7,40 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { parseBody } from '../auth/validate.js';
 import type { AuthUser } from '../auth/types.js';
 
-const registerSchema = z.object({
-  name: z.string().min(1).max(120),
-  description: z.string().min(1).max(2000),
-  category: z.string().max(120).optional(),
-  capabilities: z.array(z.string().max(60)).max(20).optional(),
-  pricingModel: z.nativeEnum(PricingModel),
-  pricePerCall: z.number().nonnegative(),
-  endpoint: z.string().url(),
-  stellarAddress: z.string().min(1).max(120),
+const jsonSchemaObj = z.record(z.unknown());
+const verificationSchema = z.object({
+  method: z.enum(['onchain', 'witness', 'content-hash', 'signature', 'attest', 'manual']),
+  spec: z.record(z.unknown()).optional(),
 });
+
+// Methods valid for each tier: T1 is trustless, T2 is attested (schema + dispute),
+// T3 is human/milestone. A manifest whose method does not match its tier is rejected.
+const TIER_METHODS: Record<string, string[]> = {
+  T1: ['onchain', 'witness', 'content-hash', 'signature'],
+  T2: ['attest'],
+  T3: ['manual'],
+};
+
+const registerSchema = z
+  .object({
+    name: z.string().min(1).max(120),
+    description: z.string().min(1).max(2000),
+    category: z.string().max(120).optional(),
+    capabilities: z.array(z.string().max(60)).max(20).optional(),
+    pricingModel: z.nativeEnum(PricingModel),
+    pricePerCall: z.number().nonnegative(),
+    endpoint: z.string().url(),
+    stellarAddress: z.string().min(1).max(120),
+    // Acceptance contract (optional for back-compat; see MARKETPLACE-ECONOMY-SPEC.md).
+    tier: z.enum(['T1', 'T2', 'T3']).optional(),
+    inputSchema: jsonSchemaObj.optional(),
+    outputSchema: jsonSchemaObj.optional(),
+    verification: verificationSchema.optional(),
+  })
+  .refine(
+    (o) => !o.tier || !o.verification || TIER_METHODS[o.tier].includes(o.verification.method),
+    { message: 'verification.method must match the tier (T1 trustless / T2 attest / T3 manual)' },
+  );
 
 const updateSchema = z
   .object({

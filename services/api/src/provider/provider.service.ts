@@ -46,6 +46,11 @@ export interface RegisterServiceParams {
   pricePerCall: number;
   endpoint: string;
   stellarAddress: string;
+  // Acceptance contract (optional; see MARKETPLACE-ECONOMY-SPEC.md).
+  tier?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  verification?: { method: string; spec?: Record<string, unknown> };
 }
 
 /** Fields a provider may edit after registration. All optional (partial update). */
@@ -81,6 +86,8 @@ function serializeService(s: ServiceWithRep) {
     pricePerCall: Number(s.pricePerCall),
     currency: s.currency,
     status: s.status,
+    tier: s.tier,
+    verification: s.verification ?? null,
     reputation: s.reputation
       ? { score: s.reputation.score, totalJobs: s.reputation.totalJobs }
       : null,
@@ -114,6 +121,10 @@ export class ProviderService {
           endpoint: params.endpoint,
           stellarAddress: params.stellarAddress,
           status: ServiceStatus.ACTIVE,
+          tier: params.tier ?? 'T2',
+          inputSchema: (params.inputSchema ?? undefined) as Prisma.InputJsonValue | undefined,
+          outputSchema: (params.outputSchema ?? undefined) as Prisma.InputJsonValue | undefined,
+          verification: (params.verification ?? undefined) as Prisma.InputJsonValue | undefined,
           manifestHash: manifestHash({
             name: params.name,
             description: params.description,
