@@ -7,6 +7,7 @@ const listQuery = z.object({
   q: z.string().optional(),
   category: z.string().optional(),
   capability: z.string().optional(),
+  tier: z.enum(['T1', 'T2', 'T3']).optional(),
   sort: z.enum(['trust', 'recent', 'rating', 'price_asc', 'price_desc']).optional(),
   limit: z.coerce.number().int().positive().optional(),
   offset: z.coerce.number().int().nonnegative().optional(),

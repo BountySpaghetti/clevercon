@@ -31,7 +31,7 @@ import {
 import { isDemo } from '../../config';
 import { useSession } from '../../store/session';
 import { demoCategories } from '../../lib/demo';
-import { getServices, type ServiceSort } from '../../lib/services';
+import { getServices, tierLabel, type ServiceSort, type Tier } from '../../lib/services';
 import {
   getVault,
   getVaultStatus,
@@ -943,6 +943,7 @@ export function Marketplace() {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [cat, setCat] = useState<string>('All');
+  const [tier, setTier] = useState<Tier | 'All'>('All');
   const [sort, setSort] = useState<ServiceSort>('recent');
   const [page, setPage] = useState(0);
 
@@ -953,14 +954,15 @@ export function Marketplace() {
   }, [q]);
 
   // Any filter/sort/search change resets to the first page.
-  useEffect(() => setPage(0), [debouncedQ, cat, sort]);
+  useEffect(() => setPage(0), [debouncedQ, cat, tier, sort]);
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['services', { q: debouncedQ, cat, sort, page }],
+    queryKey: ['services', { q: debouncedQ, cat, tier, sort, page }],
     queryFn: () =>
       getServices({
         q: debouncedQ,
         category: cat,
+        tier,
         sort,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
@@ -1012,6 +1014,17 @@ export function Marketplace() {
             ))}
           </select>
           <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value as Tier | 'All')}
+            className={`w-auto ${inputCls}`}
+            aria-label="Filter by verification tier"
+          >
+            <option value="All">Any verification</option>
+            <option value="T1">Verifiable (trustless)</option>
+            <option value="T2">Attestable</option>
+            <option value="T3">Human</option>
+          </select>
+          <select
             value={sort}
             onChange={(e) => setSort(e.target.value as ServiceSort)}
             className={`w-auto ${inputCls}`}
@@ -1057,6 +1070,17 @@ export function Marketplace() {
               <p className="mt-1 line-clamp-2 text-sm text-slate-400">{s.description}</p>
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 <TrustBadge trust={s.trust} settlements={s.settlements} />
+                <Badge
+                  className={
+                    s.tier === 'T1'
+                      ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
+                      : s.tier === 'T3'
+                        ? 'border-white/10 bg-white/[0.04] text-slate-300'
+                        : 'border-violet-500/25 bg-violet-500/10 text-violet-300'
+                  }
+                >
+                  <ShieldCheck size={11} /> {tierLabel(s.tier)}
+                </Badge>
                 <Badge className="border-white/10 bg-white/[0.04] text-slate-300">
                   <Zap size={11} /> {s.pricingModel === 'MPP' ? 'metered' : 'x402'}
                 </Badge>

@@ -5,6 +5,13 @@ import { demoServices } from './demo';
 /** Settlement-gated trust tier, earned by real on-chain settled jobs. */
 export type TrustTier = 'new' | 'active' | 'trusted';
 
+/** Verification tier: how a service's delivery is judged before it is paid. */
+export type Tier = 'T1' | 'T2' | 'T3';
+
+export interface Verification {
+  method: string;
+}
+
 export interface Service {
   id: string;
   name: string;
@@ -21,6 +28,10 @@ export interface Service {
   verified: boolean;
   /** How the service charges: x402 one-shot or MPP metered. */
   pricingModel: string;
+  /** Verification tier (T1 trustless / T2 attestable / T3 human). */
+  tier: Tier;
+  /** How delivery is verified, when declared. */
+  verification: Verification | null;
 }
 
 interface ApiService {
@@ -33,7 +44,35 @@ interface ApiService {
   trust?: TrustTier;
   settlements?: number;
   verified?: boolean;
+  tier?: Tier;
+  verification?: Verification | null;
   reputation: { score: number } | null;
+}
+
+/** Short label for a verification tier. */
+export function tierLabel(tier: Tier): string {
+  return tier === 'T1' ? 'Verifiable' : tier === 'T2' ? 'Attestable' : 'Human';
+}
+
+/** Plain-language explanation of how a service's delivery is judged before payment. */
+export function verificationBlurb(tier: Tier, v: Verification | null): string {
+  if (tier === 'T1') {
+    switch (v?.method) {
+      case 'onchain':
+        return 'Trustless: the result is re-derived and checked on-chain before you pay.';
+      case 'content-hash':
+        return 'Trustless: the result must match the requested content hash before you pay.';
+      case 'signature':
+        return 'Signed by the provider and verified before you pay.';
+      case 'witness':
+        return 'Trustless: the result carries a proof your agent re-checks before you pay.';
+      default:
+        return 'Trustless: the result is verified before you pay.';
+    }
+  }
+  if (tier === 'T2')
+    return 'Attestable: checked against the declared result shape, with a dispute window if contested.';
+  return 'Human: released on your approval or a milestone.';
 }
 
 export type ServiceSort = 'trust' | 'recent' | 'rating' | 'price_asc' | 'price_desc';
@@ -41,6 +80,7 @@ export type ServiceSort = 'trust' | 'recent' | 'rating' | 'price_asc' | 'price_d
 export interface ServiceQuery {
   q?: string;
   category?: string;
+  tier?: Tier | 'All';
   sort?: ServiceSort;
   limit?: number;
   offset?: number;
@@ -64,6 +104,8 @@ function mapApiService(s: ApiService): Service {
     settlements: s.settlements ?? 0,
     verified: !!s.verified,
     pricingModel: s.pricingModel,
+    tier: s.tier ?? 'T2',
+    verification: s.verification ?? null,
   };
 }
 
@@ -83,7 +125,7 @@ function sortClient(list: Service[], sort: ServiceSort): Service[] {
  * demo list client-side so the UI behaves identically.
  */
 export async function getServices(params: ServiceQuery = {}): Promise<ServicePage> {
-  const { q = '', category, sort = 'trust', limit = 12, offset = 0 } = params;
+  const { q = '', category, tier, sort = 'trust', limit = 12, offset = 0 } = params;
   if (isDemo()) {
     let list: Service[] = demoServices.map((d) => ({
       id: d.id,
@@ -97,8 +139,11 @@ export async function getServices(params: ServiceQuery = {}): Promise<ServicePag
       settlements: Math.round(d.rating * 7),
       verified: d.rating >= 4.7,
       pricingModel: d.provider === 'streaming' ? 'MPP' : 'X402',
+      tier: d.rating >= 4.7 ? 'T1' : 'T2',
+      verification: d.rating >= 4.7 ? { method: 'onchain' } : { method: 'attest' },
     }));
     if (category && category !== 'All') list = list.filter((s) => s.category === category);
+    if (tier && tier !== 'All') list = list.filter((s) => s.tier === tier);
     if (q) {
       const t = q.toLowerCase();
       list = list.filter(
@@ -111,6 +156,7 @@ export async function getServices(params: ServiceQuery = {}): Promise<ServicePag
   const usp = new URLSearchParams();
   if (q) usp.set('q', q);
   if (category && category !== 'All') usp.set('category', category);
+  if (tier && tier !== 'All') usp.set('tier', tier);
   usp.set('sort', sort);
   usp.set('limit', String(limit));
   usp.set('offset', String(offset));
@@ -151,6 +197,8 @@ export async function getService(id: string): Promise<ServiceDetail> {
       trust: 'trusted',
       settlements: 30,
       verified: true,
+      tier: 'T1',
+      verification: { method: 'onchain' },
       capabilities: ['demo-capability'],
       pricingModel: 'X402',
       currency: 'USDC',
@@ -172,6 +220,8 @@ export async function getService(id: string): Promise<ServiceDetail> {
     trust: s.trust ?? 'new',
     settlements: s.settlements ?? 0,
     verified: !!s.verified,
+    tier: s.tier ?? 'T2',
+    verification: s.verification ?? null,
     capabilities: s.capabilities ?? [],
     pricingModel: s.pricingModel,
     currency: s.currency,

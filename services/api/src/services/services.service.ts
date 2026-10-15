@@ -10,6 +10,7 @@ export interface ListParams {
   q?: string;
   category?: string;
   capability?: string;
+  tier?: string;
   sort?: ServiceSort;
   limit?: number;
   offset?: number;
@@ -96,6 +97,7 @@ export class ServicesService {
       status: { in: [ServiceStatus.ACTIVE, ServiceStatus.NEW] },
     };
     if (params.category) where.category = params.category;
+    if (params.tier) where.tier = params.tier;
     if (params.capability) where.capabilities = { has: params.capability };
     // Server-side search so it composes correctly with pagination.
     if (params.q)

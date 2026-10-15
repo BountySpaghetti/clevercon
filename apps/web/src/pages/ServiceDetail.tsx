@@ -1,8 +1,18 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Star, Zap, Clock, Briefcase, BadgeCheck, Award, Lock } from 'lucide-react';
-import { getService } from '../lib/services';
+import {
+  ArrowLeft,
+  Star,
+  Zap,
+  Clock,
+  Briefcase,
+  BadgeCheck,
+  Award,
+  Lock,
+  ShieldCheck,
+} from 'lucide-react';
+import { getService, tierLabel, verificationBlurb } from '../lib/services';
 import { createTask } from '../lib/tasks';
 
 function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: string }) {
@@ -129,6 +139,31 @@ export function ServiceDetail() {
                 <div className="text-xs text-slate-500">{s.label}</div>
               </div>
             ))}
+          </div>
+
+          <div
+            className={`rounded-2xl border p-5 ${
+              service.tier === 'T1'
+                ? 'border-emerald-500/25 bg-emerald-500/[0.06]'
+                : 'border-violet-500/20 bg-violet-500/[0.06]'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck
+                size={16}
+                className={service.tier === 'T1' ? 'text-emerald-300' : 'text-violet-300'}
+              />
+              <h2 className="font-semibold text-slate-200">
+                How you&apos;re protected · {tierLabel(service.tier)}
+              </h2>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              {verificationBlurb(service.tier, service.verification)}
+            </p>
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-500">
+              <Lock size={12} /> Paid from your vault under your private, on-chain-enforced policy, only
+              on an accepted result.
+            </p>
           </div>
 
           <div className="grid lg:grid-cols-2 gap-6">
