@@ -1,4 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk';
+import { createHash } from 'node:crypto';
 import type { VerificationSpec, JobResultEnvelope, JsonSchema } from './service-manifest.js';
 
 /**
@@ -16,9 +17,18 @@ export type WitnessPredicate = (input: Record<string, unknown>, data: unknown) =
 
 /** Named trustless witness checks for method `witness` (extend via options). */
 export const WITNESS_PREDICATES: Record<string, WitnessPredicate> = {
+  // The returned factors multiply back to the requested product.
   product: (input, data) => {
     const d = data as { a?: number; b?: number } | null;
     return !!d && typeof d.a === 'number' && typeof d.b === 'number' && d.a * d.b === Number(input.n);
+  },
+  // The returned digest is sha256 of the requested data (re-hashed and compared,
+  // so a notary/commitment service cannot be paid for a wrong hash).
+  sha256: (input, data) => {
+    const d = data as { sha256?: string } | null;
+    const src = input.data;
+    if (!d?.sha256 || typeof src !== 'string') return false;
+    return createHash('sha256').update(src).digest('hex') === d.sha256;
   },
 };
 
