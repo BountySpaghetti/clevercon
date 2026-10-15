@@ -5,6 +5,9 @@
 //
 // Design: a service declares a verification `tier`, and the release path is matched
 // to it. See .local/MARKETPLACE-ECONOMY-SPEC.md sections 3-5, 11.
+//
+// NOTE: the published SDK mirrors these in packages/agent-sdk/src/marketplace.ts
+// (it must not depend on @clevercon/common). Keep the two in sync.
 
 /**
  * Verification tier, determines how delivery is judged and when funds release.

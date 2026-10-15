@@ -81,3 +81,23 @@ export type { WithX402Options, PayingFetchOptions } from './payments/x402.js';
 export type { WithMppOptions } from './payments/mpp.js';
 export type { RegistryClient, RegistryClientOptions } from './registry.js';
 export type { ResolvedConfig } from './config.js';
+
+// Marketplace acceptance contract + buyer-side verification (P0.3).
+export {
+  verifyResult,
+  buildVerifier,
+  validateSchema,
+  resultSigningPayload,
+  WITNESS_PREDICATES,
+} from './verifier.js';
+export type { VerifyResult, VerifyOptions, WitnessPredicate } from './verifier.js';
+export type {
+  Tier,
+  VerificationMethod,
+  VerificationSpec,
+  ArtifactRef,
+  JsonSchema,
+  ServiceManifest,
+  JobRequestEnvelope,
+  JobResultEnvelope,
+} from './marketplace.js';

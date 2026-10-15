@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
+import type { ServiceManifest } from './marketplace.js';
 
 /**
  * The CleverCon provider fulfillment SDK: the small amount of glue that turns a
@@ -58,6 +59,12 @@ export interface ProviderOptions {
   port?: number;
   /** Where to log lifecycle lines (defaults to console). */
   logger?: Logger;
+  /**
+   * The service's acceptance contract (tier, io schemas, verification spec). Used
+   * by the marketplace to register the service and by buyers to verify delivery.
+   * Optional for back-compat; required for the new acceptance pipeline.
+   */
+  manifest?: ServiceManifest;
 }
 
 export interface Provider {
