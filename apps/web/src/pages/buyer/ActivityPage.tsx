@@ -13,6 +13,41 @@ import {
   ArrowUpFromLine,
 } from 'lucide-react';
 import { getActivity, type ActivityItem, type ActivityKind } from '../../lib/activity';
+import { getDisputes } from '../../lib/tasks';
+
+function BuyerDisputes() {
+  const { data: disputes = [] } = useQuery({ queryKey: ['disputes'], queryFn: getDisputes });
+  if (disputes.length === 0) return null;
+  const tone = (s: string) =>
+    s === 'OPEN' ? 'text-amber-300' : s === 'RESOLVED' ? 'text-emerald-300' : 'text-slate-400';
+  return (
+    <div>
+      <h2 className="cc-eyebrow mb-2">Your disputes</h2>
+      <div className="cc-card overflow-hidden">
+        {disputes.map((d, i) => (
+          <div
+            key={d.id}
+            className={`flex items-center justify-between px-4 py-3 ${i < disputes.length - 1 ? 'border-b border-line' : ''}`}
+          >
+            <div className="min-w-0">
+              <Link
+                to={`/app/tasks/${d.taskId}`}
+                className="text-sm font-medium text-slate-200 hover:text-white"
+              >
+                {d.task ?? d.taskId}
+              </Link>
+              {d.reason && <p className="truncate text-xs text-slate-500">{d.reason}</p>}
+              {d.resolution && (
+                <p className="truncate text-xs text-slate-500">Resolution: {d.resolution}</p>
+              )}
+            </div>
+            <span className={`shrink-0 text-xs font-semibold ${tone(d.status)}`}>{d.status}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 type Tone = 'good' | 'violet' | 'warn' | 'slate';
 const KIND_META: Record<ActivityKind, { icon: typeof Plus; label: string; tone: Tone }> = {
@@ -132,6 +167,8 @@ export function ActivityPage() {
           <Row key={it.id} item={it} last={i === items.length - 1} />
         ))}
       </div>
+
+      <BuyerDisputes />
     </div>
   );
 }
