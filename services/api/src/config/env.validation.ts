@@ -70,6 +70,14 @@ export const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  // Cloudflare R2 (S3-compatible) for job attachments. All optional: uploads are
+  // simply unavailable (503) until these are set. R2_PUBLIC_BASE_URL is the
+  // bucket's public URL (r2.dev or a custom domain) for direct, stable downloads.
+  R2_ACCOUNT_ID: z.string().optional(),
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_PUBLIC_BASE_URL: z.string().url().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

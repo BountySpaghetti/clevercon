@@ -16,6 +16,7 @@ import { DisputesModule } from './disputes/disputes.module.js';
 import { AgentModule } from './agent/agent.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
+import { UploadsModule } from './uploads/uploads.module.js';
 import { QueueModule } from './queue/queue.module.js';
 import { EventsModule } from './events/events.module.js';
 import { RateLimitModule } from './throttler/rate-limit.module.js';
@@ -48,6 +49,7 @@ import { AppLoggerModule } from './logging/logger.module.js';
     AgentModule,
     AdminModule,
     WebhooksModule,
+    UploadsModule,
   ],
 })
 export class AppModule {}
