@@ -1,4 +1,4 @@
-import { type PrismaClient, StepStatus, TaskStatus } from '@clevercon/db';
+import { type PrismaClient, DisputeStatus, StepStatus, TaskStatus } from '@clevercon/db';
 import {
   validateSchema,
   verifyDelivery,
@@ -7,21 +7,44 @@ import {
   type VerificationSpec,
   type JsonSchema,
 } from '@clevercon/common';
-import { enqueueSettlement } from './queue.js';
+import { enqueueSettlement, enqueueStepRelease } from './queue.js';
 import { finalizeTaskIfComplete } from './settlement.js';
 
 export interface ExecuteResult {
-  status: 'completed' | 'failed' | 'skipped';
+  // `awaiting` = the task ran but is holding at least one T2 step for its dispute
+  // window (not yet terminal, no completion webhook).
+  status: 'completed' | 'failed' | 'skipped' | 'awaiting';
   reason?: string;
   stepsRun?: number;
   /** The task's buyer, so the worker can push a real-time update to their room. */
   buyerId?: string;
 }
 
+/**
+ * Injectable queue producers so the executor stays hermetic in unit tests (no
+ * Redis). Default to the real BullMQ producers; tests pass spies.
+ */
+export interface ExecuteDeps {
+  scheduleRelease?: (stepId: string, delayMs: number) => Promise<void>;
+  enqueueSettle?: (stepId: string) => Promise<void>;
+}
+
 type FetchImpl = typeof fetch;
 
 const STEP_TIMEOUT_MS = 15_000;
 const TERMINAL: TaskStatus[] = [TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED];
+
+/**
+ * The T2 (Attestable) dispute window in seconds: an accepted T2 step is held
+ * AWAITING_APPROVAL for this long before auto-releasing, so the buyer can approve
+ * early or raise a dispute (the lock IS the escrow). Read at call time so it is
+ * configurable per deploy. 0 (the default) disables the hold: T2 releases
+ * immediately, matching pre-window behavior — a safe opt-in for operators.
+ */
+function disputeWindowSeconds(): number {
+  const n = Number(process.env.DISPUTE_WINDOW_SECONDS ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
 
 /**
  * Acceptance check: a step is paid only when the provider returned a usable
@@ -138,7 +161,11 @@ export async function executeTask(
   prisma: PrismaClient,
   fetchImpl: FetchImpl,
   taskId: string,
+  deps: ExecuteDeps = {},
 ): Promise<ExecuteResult> {
+  const scheduleRelease = deps.scheduleRelease ?? enqueueStepRelease;
+  const enqueueSettle = deps.enqueueSettle ?? enqueueSettlement;
+  const windowSec = disputeWindowSeconds();
   const task = await prisma.task.findUnique({
     where: { id: taskId },
     include: { steps: { orderBy: { index: 'asc' }, include: { service: true } } },
@@ -150,9 +177,16 @@ export async function executeTask(
   await prisma.task.update({ where: { id: taskId }, data: { status: TaskStatus.RUNNING } });
 
   let anyFailed = false;
+  let anyHeld = false;
   let stepsRun = 0;
   for (const step of task.steps) {
     if (step.status === StepStatus.RELEASED) continue; // idempotent replay
+    // A held T2 step is already awaiting its window: do not re-call the provider,
+    // and keep the task non-terminal (RUNNING) so a replay does not complete it.
+    if (step.status === StepStatus.AWAITING_APPROVAL) {
+      anyHeld = true;
+      continue;
+    }
 
     const endpoint = step.service?.endpoint;
     if (!endpoint) {
@@ -211,19 +245,46 @@ export async function executeTask(
           ? envelope.data
           : JSON.stringify(envelope.data ?? envelope.artifact ?? '')
       ).slice(0, 2000);
-      await prisma.taskStep.update({
-        where: { id: step.id },
-        data: { status: StepStatus.RELEASED, output: storedOutput, latencyMs, error: null },
-      });
-      if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
-      // If the task is locked on-chain under a policy, settle this step (pay the
-      // provider via a proof-gated release) out of band. Non-fatal: execution
-      // never fails because settlement could not be enqueued.
-      if (task.vaultTaskId && step.serviceId) {
+      // T2 (Attestable) steps that pass acceptance are held for a dispute window
+      // instead of releasing immediately: the buyer can approve early or dispute
+      // (the lock is the escrow). T1 is trustless (already verified) and releases
+      // now; with the window disabled (0), T2 also releases now.
+      const held = step.service?.tier === 'T2' && windowSec > 0;
+      if (held) {
+        await prisma.taskStep.update({
+          where: { id: step.id },
+          data: {
+            status: StepStatus.AWAITING_APPROVAL,
+            output: storedOutput,
+            latencyMs,
+            error: null,
+            releaseAt: new Date(Date.now() + windowSec * 1000),
+          },
+        });
+        if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
+        anyHeld = true;
+        // Schedule the auto-release at the end of the window (idempotent jobId).
         try {
-          await enqueueSettlement(step.id);
+          await scheduleRelease(step.id, windowSec * 1000);
         } catch {
-          // settlement can be retried/driven later; do not fail the step
+          // The window can be driven later (approve-early or a re-schedule); the
+          // step is safely parked AWAITING_APPROVAL in the meantime.
+        }
+      } else {
+        await prisma.taskStep.update({
+          where: { id: step.id },
+          data: { status: StepStatus.RELEASED, output: storedOutput, latencyMs, error: null },
+        });
+        if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
+        // If the task is locked on-chain under a policy, settle this step (pay the
+        // provider via a proof-gated release) out of band. Non-fatal: execution
+        // never fails because settlement could not be enqueued.
+        if (task.vaultTaskId && step.serviceId) {
+          try {
+            await enqueueSettle(step.id);
+          } catch {
+            // settlement can be retried/driven later; do not fail the step
+          }
         }
       }
       stepsRun += 1;
@@ -243,7 +304,10 @@ export async function executeTask(
     }
   }
 
-  const status = anyFailed ? TaskStatus.FAILED : TaskStatus.COMPLETED;
+  // A held task stays RUNNING: its T2 steps are AWAITING_APPROVAL until the window
+  // elapses (or the buyer approves/disputes), so it is not yet terminal and gets
+  // no completion webhook. finalizeTaskIfComplete also skips while a step is held.
+  const status = anyFailed ? TaskStatus.FAILED : anyHeld ? TaskStatus.RUNNING : TaskStatus.COMPLETED;
   await prisma.task.update({ where: { id: taskId }, data: { status } });
   // Finalize the on-chain task if nothing settled (e.g. all steps failed), so the
   // locked budget is unlocked instead of stranded. When steps DID release, this is
@@ -256,5 +320,90 @@ export async function executeTask(
       // stale-task escape hatch both cover it.
     }
   }
-  return { status: anyFailed ? 'failed' : 'completed', stepsRun, buyerId: task.buyerId };
+  return {
+    status: anyFailed ? 'failed' : anyHeld ? 'awaiting' : 'completed',
+    stepsRun,
+    buyerId: task.buyerId,
+  };
+}
+
+/** The injectable settlement producer for releaseHeldStep (hermetic in tests). */
+export interface ReleaseDeps {
+  enqueueSettle?: (stepId: string) => Promise<void>;
+}
+
+export interface ReleaseHeldResult {
+  status: 'released' | 'skipped';
+  reason?: string;
+  buyerId?: string;
+  taskId?: string;
+}
+
+/**
+ * Auto-release a T2 step whose dispute window has elapsed. Idempotent and safe to
+ * replay: it releases ONLY a step still AWAITING_APPROVAL on a non-frozen task
+ * with no open dispute, then enqueues settlement (the same proof-gated vault
+ * release as a T1 step). If the step was approved early, already released, or the
+ * task is disputed/cancelled/failed, it no-ops so the timer never fights the
+ * buyer or the resolver. For a task not locked on-chain (no settlement path) it
+ * completes the task here once no step is still open.
+ */
+export async function releaseHeldStep(
+  prisma: PrismaClient,
+  stepId: string,
+  deps: ReleaseDeps = {},
+): Promise<ReleaseHeldResult> {
+  const enqueueSettle = deps.enqueueSettle ?? enqueueSettlement;
+  const step = await prisma.taskStep.findUnique({
+    where: { id: stepId },
+    include: {
+      task: { select: { id: true, status: true, buyerId: true, vaultTaskId: true } },
+    },
+  });
+  if (!step) return { status: 'skipped', reason: 'step not found' };
+  const task = step.task;
+  if (!task) return { status: 'skipped', reason: 'step has no task' };
+  const buyerId = task.buyerId;
+  if (step.status !== StepStatus.AWAITING_APPROVAL)
+    return { status: 'skipped', reason: 'step not awaiting approval', buyerId, taskId: task.id };
+  // A frozen task pauses the window: a dispute (on-chain freeze) or any terminal
+  // state means the resolver or buyer decides the outcome, not the timer.
+  if (
+    task.status === TaskStatus.DISPUTED ||
+    task.status === TaskStatus.CANCELLED ||
+    task.status === TaskStatus.FAILED
+  )
+    return { status: 'skipped', reason: `task ${task.status.toLowerCase()}`, buyerId, taskId: task.id };
+  const openDisputes = await prisma.dispute.count({
+    where: { taskId: task.id, status: DisputeStatus.OPEN },
+  });
+  if (openDisputes > 0)
+    return { status: 'skipped', reason: 'dispute open', buyerId, taskId: task.id };
+
+  // The window elapsed with no dispute: release and settle.
+  await prisma.taskStep.update({
+    where: { id: stepId },
+    data: { status: StepStatus.RELEASED, releaseAt: null },
+  });
+  if (task.vaultTaskId && step.serviceId) {
+    try {
+      await enqueueSettle(stepId);
+    } catch {
+      // settlement can be driven later; the step is released regardless
+    }
+  } else {
+    // No on-chain settlement to finalize this task, so complete it here once no
+    // step is still open (a locked task is completed by finalizeTaskIfComplete).
+    const stillOpen = await prisma.taskStep.count({
+      where: {
+        taskId: task.id,
+        status: {
+          in: [StepStatus.PENDING, StepStatus.RUNNING, StepStatus.AWAITING_APPROVAL],
+        },
+      },
+    });
+    if (stillOpen === 0)
+      await prisma.task.update({ where: { id: task.id }, data: { status: TaskStatus.COMPLETED } });
+  }
+  return { status: 'released', buyerId, taskId: task.id };
 }

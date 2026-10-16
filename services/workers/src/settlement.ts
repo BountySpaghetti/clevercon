@@ -662,7 +662,13 @@ export async function finalizeTaskIfComplete(
   prisma: PrismaClient,
   taskId: string,
   complete: CompleteFn = completeTaskOnChain,
-): Promise<{ status: 'finalized' | 'already' | 'skipped'; reason?: string; mode?: TaskMode }> {
+): Promise<{
+  status: 'finalized' | 'already' | 'skipped';
+  reason?: string;
+  mode?: TaskMode;
+  /** True only when THIS call flipped the task to COMPLETED (fire completion once). */
+  completed?: boolean;
+}> {
   const task = await prisma.task.findUnique({ where: { id: taskId }, include: { steps: true } });
   if (!task) return { status: 'skipped', reason: 'task not found' };
   if (!task.vaultTaskId) return { status: 'skipped', reason: 'not locked on-chain' };
@@ -698,25 +704,31 @@ export async function finalizeTaskIfComplete(
   }
   if (outcome === 'disputed') return { status: 'skipped', reason: 'task disputed' };
 
-  // PAY/DISBURSE tasks have no executor to mark them done, so complete them here
-  // once finalized. Never override a FAILED/CANCELLED/DISPUTED terminal state.
-  const completeStatus =
-    (task.mode === TaskMode.PAY || task.mode === TaskMode.DISBURSE) &&
-    task.status !== TaskStatus.FAILED &&
-    task.status !== TaskStatus.CANCELLED &&
-    task.status !== TaskStatus.DISPUTED;
+  // Finalizing means every step settled on-chain, so the task is done. Complete it
+  // now unless it is already terminal. A normal hire is already COMPLETED by the
+  // executor (so completedHere is false and no duplicate completion fires); a held
+  // T2 hire (left RUNNING for its window) and a PAY/DISBURSE are completed here.
+  const terminal =
+    task.status === TaskStatus.FAILED ||
+    task.status === TaskStatus.CANCELLED ||
+    task.status === TaskStatus.DISPUTED;
+  const completedHere = !terminal && task.status !== TaskStatus.COMPLETED;
   await prisma.task.update({
     where: { id: taskId },
     data: {
       vaultFinalizedAt: new Date(),
-      ...(completeStatus ? { status: TaskStatus.COMPLETED } : {}),
+      ...(completedHere ? { status: TaskStatus.COMPLETED } : {}),
     },
   });
   logger.info(
     { taskId, vaultTaskId: String(task.vaultTaskId), outcome },
     'task finalized on-chain (budget unlocked)',
   );
-  return { status: outcome === 'already' ? 'already' : 'finalized', mode: task.mode };
+  return {
+    status: outcome === 'already' ? 'already' : 'finalized',
+    mode: task.mode,
+    completed: completedHere,
+  };
 }
 
 // ── Recovery: unlock orphan batch-disburse locks ──────────────────────────────

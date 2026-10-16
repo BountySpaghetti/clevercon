@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { executeTask, isAcceptableOutput } from './executor.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { executeTask, isAcceptableOutput, releaseHeldStep } from './executor.js';
 
 interface Service {
   endpoint: string;
@@ -18,6 +18,7 @@ interface Step {
   output?: string | null;
   error?: string | null;
   latencyMs?: number | null;
+  releaseAt?: Date | null;
 }
 interface Task {
   id: string;
@@ -211,6 +212,171 @@ describe('executeTask', () => {
       'failed',
     );
     expect(failTask.steps[0].error).toContain('verification');
+  });
+});
+
+describe('executeTask T2 dispute window', () => {
+  afterEach(() => {
+    delete process.env.DISPUTE_WINDOW_SECONDS;
+  });
+
+  function t2Task(id: string): Task {
+    return {
+      id,
+      status: 'PENDING',
+      steps: [
+        {
+          id: 's1',
+          index: 0,
+          action: 'x',
+          status: 'PENDING',
+          serviceId: 'svc1',
+          service: { endpoint: 'https://svc.test', tier: 'T2' },
+        },
+      ],
+    };
+  }
+
+  it('holds an accepted T2 step for the window instead of releasing it', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '3600';
+    const task = t2Task('tw1');
+    const scheduleRelease = vi.fn(async () => {});
+    const enqueueSettle = vi.fn(async () => {});
+    const res = await executeTask(mockPrisma(task), okFetch as unknown as typeof fetch, 'tw1', {
+      scheduleRelease,
+      enqueueSettle,
+    });
+    expect(res.status).toBe('awaiting');
+    expect(task.status).toBe('RUNNING'); // not COMPLETED while held
+    expect(task.steps[0].status).toBe('AWAITING_APPROVAL');
+    expect(task.steps[0].releaseAt).toBeInstanceOf(Date);
+    expect(scheduleRelease).toHaveBeenCalledWith('s1', 3600 * 1000);
+    expect(enqueueSettle).not.toHaveBeenCalled(); // no release yet
+  });
+
+  it('releases a T2 step immediately when the window is disabled (0)', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '0';
+    const task = t2Task('tw2');
+    const scheduleRelease = vi.fn(async () => {});
+    const res = await executeTask(mockPrisma(task), okFetch as unknown as typeof fetch, 'tw2', {
+      scheduleRelease,
+    });
+    expect(res.status).toBe('completed');
+    expect(task.steps[0].status).toBe('RELEASED');
+    expect(scheduleRelease).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent: a held step is not re-executed on replay', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '3600';
+    const task = t2Task('tw3');
+    task.status = 'RUNNING';
+    task.steps[0].status = 'AWAITING_APPROVAL';
+    const spy = vi.fn(async () => new Response('x', { status: 200 }));
+    const res = await executeTask(mockPrisma(task), spy as unknown as typeof fetch, 'tw3', {
+      scheduleRelease: vi.fn(async () => {}),
+    });
+    expect(res.status).toBe('awaiting');
+    expect(spy).not.toHaveBeenCalled(); // provider not called again
+  });
+});
+
+interface HeldStep {
+  id: string;
+  status: string;
+  serviceId?: string | null;
+  task: { id: string; status: string; buyerId: string; vaultTaskId: string | null } | null;
+}
+
+function mockReleasePrisma(step: HeldStep | null, openDisputes = 0, stillOpen = 0) {
+  const task = step?.task ?? null;
+  return {
+    taskStep: {
+      findUnique: vi.fn(async () => step),
+      update: vi.fn(async ({ data }: { data: Partial<HeldStep> }) => {
+        if (step) Object.assign(step, data);
+        return step;
+      }),
+      count: vi.fn(async () => stillOpen),
+    },
+    task: {
+      update: vi.fn(async ({ data }: { data: { status: string } }) => {
+        if (task) task.status = data.status;
+        return task;
+      }),
+    },
+    dispute: { count: vi.fn(async () => openDisputes) },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
+
+describe('releaseHeldStep', () => {
+  it('releases a held step and enqueues settlement when undisputed', async () => {
+    const step: HeldStep = {
+      id: 's1',
+      status: 'AWAITING_APPROVAL',
+      serviceId: 'svc1',
+      task: { id: 't1', status: 'RUNNING', buyerId: 'u1', vaultTaskId: '7' },
+    };
+    const enqueueSettle = vi.fn(async () => {});
+    const res = await releaseHeldStep(mockReleasePrisma(step), 's1', { enqueueSettle });
+    expect(res.status).toBe('released');
+    expect(step.status).toBe('RELEASED');
+    expect(enqueueSettle).toHaveBeenCalledWith('s1');
+  });
+
+  it('does not release while a dispute is open (window paused)', async () => {
+    const step: HeldStep = {
+      id: 's1',
+      status: 'AWAITING_APPROVAL',
+      serviceId: 'svc1',
+      task: { id: 't1', status: 'RUNNING', buyerId: 'u1', vaultTaskId: '7' },
+    };
+    const enqueueSettle = vi.fn(async () => {});
+    const res = await releaseHeldStep(mockReleasePrisma(step, 1), 's1', { enqueueSettle });
+    expect(res.status).toBe('skipped');
+    expect(res.reason).toBe('dispute open');
+    expect(step.status).toBe('AWAITING_APPROVAL'); // untouched
+    expect(enqueueSettle).not.toHaveBeenCalled();
+  });
+
+  it('no-ops a step that was already released (approved early)', async () => {
+    const step: HeldStep = {
+      id: 's1',
+      status: 'RELEASED',
+      serviceId: 'svc1',
+      task: { id: 't1', status: 'RUNNING', buyerId: 'u1', vaultTaskId: '7' },
+    };
+    const enqueueSettle = vi.fn(async () => {});
+    const res = await releaseHeldStep(mockReleasePrisma(step), 's1', { enqueueSettle });
+    expect(res.status).toBe('skipped');
+    expect(enqueueSettle).not.toHaveBeenCalled();
+  });
+
+  it('does not release on a disputed task', async () => {
+    const step: HeldStep = {
+      id: 's1',
+      status: 'AWAITING_APPROVAL',
+      serviceId: 'svc1',
+      task: { id: 't1', status: 'DISPUTED', buyerId: 'u1', vaultTaskId: '7' },
+    };
+    const res = await releaseHeldStep(mockReleasePrisma(step), 's1', { enqueueSettle: vi.fn() });
+    expect(res.status).toBe('skipped');
+    expect(step.status).toBe('AWAITING_APPROVAL');
+  });
+
+  it('completes an off-chain task (no vault) once no step is still open', async () => {
+    const step: HeldStep = {
+      id: 's1',
+      status: 'AWAITING_APPROVAL',
+      serviceId: 'svc1',
+      task: { id: 't1', status: 'RUNNING', buyerId: 'u1', vaultTaskId: null },
+    };
+    const enqueueSettle = vi.fn(async () => {});
+    const res = await releaseHeldStep(mockReleasePrisma(step, 0, 0), 's1', { enqueueSettle });
+    expect(res.status).toBe('released');
+    expect(step.status).toBe('RELEASED');
+    expect(step.task?.status).toBe('COMPLETED');
+    expect(enqueueSettle).not.toHaveBeenCalled(); // no on-chain settlement
   });
 });
 

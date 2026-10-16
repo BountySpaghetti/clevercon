@@ -15,6 +15,10 @@ export const SETTLEMENT_QUEUE = 'settlement';
 // The pp/2 batch-settlement queue: the API enqueues a client-proved batch; the
 // worker submits release_payment_proved_batch to the pp/2 vault.
 export const BATCH_SETTLEMENT_QUEUE = 'batch-settlement';
+// The step-release queue: a T2 (Attestable) step that passes acceptance is held
+// AWAITING_APPROVAL for a dispute window; a delayed job on this queue auto-releases
+// it once the window elapses with no dispute.
+export const STEP_RELEASE_QUEUE = 'step-release';
 
 export interface TaskExecutionJob {
   taskId: string;
@@ -28,6 +32,10 @@ export interface ProofGenerationJob {
 }
 
 export interface SettlementJob {
+  stepId: string;
+}
+
+export interface StepReleaseJob {
   stepId: string;
 }
 
@@ -107,6 +115,37 @@ export async function enqueueSettlement(stepId: string): Promise<void> {
       jobId: `settle-${stepId}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 3000 },
+      removeOnComplete: 200,
+      removeOnFail: 1000,
+    },
+  );
+}
+
+let stepReleaseQueueInstance: Queue<StepReleaseJob> | null = null;
+
+export function stepReleaseQueue(): Queue<StepReleaseJob> {
+  if (!stepReleaseQueueInstance)
+    stepReleaseQueueInstance = new Queue<StepReleaseJob>(STEP_RELEASE_QUEUE, {
+      connection: redisConnection(),
+    });
+  return stepReleaseQueueInstance;
+}
+
+/**
+ * Schedule a held T2 step to auto-release when its dispute window elapses. The
+ * jobId is per step so the same window is never scheduled twice (idempotent); the
+ * `delay` is the window in ms. The handler (releaseHeldStep) no-ops if the step
+ * was approved early, disputed, or the task is terminal, so the timer is safe.
+ */
+export async function enqueueStepRelease(stepId: string, delayMs: number): Promise<void> {
+  await stepReleaseQueue().add(
+    'release',
+    { stepId },
+    {
+      jobId: `release-${stepId}`,
+      delay: Math.max(0, delayMs),
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: 200,
       removeOnFail: 1000,
     },

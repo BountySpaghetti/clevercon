@@ -10,13 +10,15 @@ import {
   PROOF_QUEUE,
   SETTLEMENT_QUEUE,
   BATCH_SETTLEMENT_QUEUE,
+  STEP_RELEASE_QUEUE,
   redisConnection,
   redisUrl,
   type TaskExecutionJob,
   type ProofGenerationJob,
   type SettlementJob,
+  type StepReleaseJob,
 } from './queue.js';
-import { executeTask } from './executor.js';
+import { executeTask, releaseHeldStep } from './executor.js';
 import { generateProof } from './prover.js';
 import {
   settleStep,
@@ -138,10 +140,14 @@ function main(): void {
             taskId: result.taskId,
             finalized: true,
           });
-          // PAY/DISBURSE tasks complete here (no executor fires their webhook), so
-          // deliver the terminal event. A hire's completion webhook is delivered
-          // by the task-execution worker, so skip those to avoid a duplicate.
-          if (fin.mode === 'PAY' || fin.mode === 'DISBURSE') {
+          // Fire the completion event only when THIS finalize flipped the task to
+          // COMPLETED: PAY/DISBURSE and a held T2 hire complete here (no executor
+          // fired their webhook), while a normal hire was already completed by the
+          // task-execution worker, so fin.completed is false and we avoid a dup.
+          if (fin.completed) {
+            emitter
+              .to(`user:${result.buyerId}`)
+              .emit('task.updated', { taskId: result.taskId, status: 'completed' });
             await deliverWebhooks(prisma, result.buyerId, 'task.completed', {
               taskId: result.taskId,
               status: 'completed',
@@ -189,6 +195,29 @@ function main(): void {
     }
   });
 
+  // T2 dispute window: a held step auto-releases when its window elapses (unless
+  // it was approved early, disputed, or the task went terminal — releaseHeldStep
+  // no-ops in those cases). On release it enqueues the normal settlement.
+  const releaseWorker = new Worker<StepReleaseJob>(
+    STEP_RELEASE_QUEUE,
+    async (job) => {
+      const result = await releaseHeldStep(prisma, job.data.stepId);
+      if (result.buyerId && result.status === 'released') {
+        emitter
+          .to(`user:${result.buyerId}`)
+          .emit('task.updated', { stepId: job.data.stepId, released: true });
+      }
+      return result;
+    },
+    { connection: redisConnection(), concurrency: CONCURRENCY },
+  );
+  releaseWorker.on('completed', (job, result) =>
+    logger.info({ stepId: job.data.stepId, result }, 'step-release processed'),
+  );
+  releaseWorker.on('failed', (job, err) =>
+    logger.error({ stepId: job?.data.stepId, err: err.message }, 'step-release job failed'),
+  );
+
   // pp/2 batch settlement: the client proved; this relayer submits the batch.
   const batchWorker = new Worker<BatchSettlePayload>(
     BATCH_SETTLEMENT_QUEUE,
@@ -215,13 +244,14 @@ function main(): void {
 
   logger.info(
     { concurrency: CONCURRENCY },
-    'task-execution + proof-generation + settlement + batch workers up',
+    'task-execution + proof-generation + settlement + step-release + batch workers up',
   );
 
   const shutdown = async () => {
     await worker.close();
     await proofWorker.close();
     await settlementWorker.close();
+    await releaseWorker.close();
     await batchWorker.close();
     await prisma.$disconnect();
     process.exit(0);

@@ -333,6 +333,7 @@ model TaskStep {
   error         String?
   qualityRating Float?
   latencyMs     Int?
+  releaseAt     DateTime? // T2 dispute window: when a held step auto-releases if undisputed
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
