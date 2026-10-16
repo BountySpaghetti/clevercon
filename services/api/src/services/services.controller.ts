@@ -23,6 +23,12 @@ export class ServicesController {
     return this.services.list(parseBody(listQuery, query));
   }
 
+  /** Public protocol fee (bps) so the dapp can disclose the take rate. */
+  @Get('fee')
+  fee() {
+    return this.services.platformFeeBps();
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.services.get(id);

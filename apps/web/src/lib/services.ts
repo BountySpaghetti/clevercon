@@ -231,3 +231,14 @@ export async function getService(id: string): Promise<ServiceDetail> {
     avgLatencyMs: s.reputation?.avgLatencyMs ?? null,
   };
 }
+
+/** The public protocol fee in basis points (0 = none). For disclosure in the UI. */
+export async function getPlatformFeeBps(): Promise<number> {
+  if (isDemo()) return 0;
+  try {
+    const { bps } = await apiFetch<{ bps: number }>('/services/fee');
+    return bps;
+  } catch {
+    return 0;
+  }
+}

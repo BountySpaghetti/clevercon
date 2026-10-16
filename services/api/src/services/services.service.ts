@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, ServiceStatus } from '@clevercon/db';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { VaultContractService } from '../vault/vault-contract.service.js';
 
 type ServiceWithRep = Prisma.ServiceGetPayload<{ include: { reputation: true } }>;
 
@@ -120,7 +121,25 @@ function serialize(s: ServiceWithRep, verified: Set<string>, stat?: PayerStat) {
 
 @Injectable()
 export class ServicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly vault?: VaultContractService,
+  ) {}
+
+  /**
+   * The public protocol fee in basis points (0 = no fee / not configured). Read
+   * from the vault so buyers and providers can see the take rate before hiring.
+   * Best-effort: any read failure returns 0 so the marketplace never breaks over it.
+   */
+  async platformFeeBps(): Promise<{ bps: number }> {
+    if (!this.vault?.active) return { bps: 0 };
+    try {
+      const { bps } = await this.vault.getFee();
+      return { bps };
+    } catch {
+      return { bps: 0 };
+    }
+  }
 
   /**
    * Distinct paying counterparties and last-settled time per service, from real

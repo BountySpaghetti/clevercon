@@ -14,7 +14,7 @@ import {
   Paperclip,
   X,
 } from 'lucide-react';
-import { getService, tierLabel, verificationBlurb } from '../lib/services';
+import { getService, getPlatformFeeBps, tierLabel, verificationBlurb } from '../lib/services';
 import { createTask } from '../lib/tasks';
 import { uploadFile } from '../lib/uploads';
 
@@ -23,6 +23,7 @@ function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: s
   const navigate = useNavigate();
   const [budget, setBudget] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const { data: feeBps = 0 } = useQuery({ queryKey: ['platform-fee'], queryFn: getPlatformFeeBps });
 
   const hire = useMutation({
     mutationFn: async () => {
@@ -61,6 +62,11 @@ function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: s
       <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-violet-300">
         <Lock size={12} /> Paid from your vault under your private, on-chain-enforced policy.
       </p>
+      {feeBps > 0 && (
+        <p className="mt-1 text-xs text-slate-500">
+          A {(feeBps / 100).toFixed(2)}% protocol fee is taken on settlement.
+        </p>
+      )}
       <input
         value={budget}
         onChange={(e) => setBudget(e.target.value)}

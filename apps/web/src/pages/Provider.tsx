@@ -11,6 +11,7 @@ import {
   setServiceStatus,
   type RegisterServiceInput,
 } from '../lib/provider';
+import { getPlatformFeeBps } from '../lib/services';
 import { refreshRoles } from '../lib/sessionSync';
 import {
   PageHeader,
@@ -57,7 +58,9 @@ function Stats() {
     queryKey: ['provider-earnings'],
     queryFn: getProviderEarnings,
   });
+  const { data: feeBps = 0 } = useQuery({ queryKey: ['platform-fee'], queryFn: getPlatformFeeBps });
   return (
+    <>
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatCard
         icon={DollarSign}
@@ -88,6 +91,12 @@ function Stats() {
         value={(data?.rating ?? 0).toFixed(1)}
       />
     </div>
+      {feeBps > 0 && (
+        <p className="mt-2 text-xs text-slate-500">
+          Earnings are net of a {(feeBps / 100).toFixed(2)}% protocol fee deducted on each payout.
+        </p>
+      )}
+    </>
   );
 }
 
