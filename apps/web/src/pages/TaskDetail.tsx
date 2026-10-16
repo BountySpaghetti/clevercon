@@ -7,8 +7,10 @@ import {
   Flag,
   ShieldCheck,
   ExternalLink,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react';
-import { getTask, raiseDispute } from '../lib/tasks';
+import { getTask, raiseDispute, approveTask, type TaskDetail as TaskDetailData } from '../lib/tasks';
 import { config } from '../config';
 
 const EXPLORER_NET = config.network === 'mainnet' ? 'public' : 'testnet';
@@ -33,6 +35,64 @@ function DisputeButton({ taskId }: { taskId: string }) {
     >
       <Flag size={12} /> {raise.isPending ? 'Raising…' : 'Raise dispute'}
     </button>
+  );
+}
+
+/** A coarse, non-ticking "time until" label for the dispute-window countdown. */
+function until(target: number): string {
+  const diff = target - Date.now();
+  if (diff <= 0) return 'shortly';
+  const mins = Math.round(diff / 60000);
+  if (mins < 60) return `in ~${mins} min`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `in ~${hrs}h`;
+  return `in ~${Math.round(hrs / 24)}d`;
+}
+
+/**
+ * Shown while a T2 delivery is in its dispute window: the funds sit in escrow
+ * (the on-chain lock) until the window ends. The buyer can approve early to pay
+ * the provider now, or dispute (the header button) to freeze it for a resolver.
+ */
+function ReviewBanner({ task }: { task: TaskDetailData }) {
+  const qc = useQueryClient();
+  const approve = useMutation({
+    mutationFn: () => approveTask(task.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task', task.id] }),
+  });
+  const releaseAt = task.steps
+    .filter((s) => s.status === 'AWAITING_APPROVAL' && s.releaseAt)
+    .map((s) => Date.parse(s.releaseAt as string))
+    .filter((t) => !Number.isNaN(t))
+    .sort((a, b) => a - b)[0];
+  return (
+    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Clock size={18} className="shrink-0 text-amber-300" />
+        <div className="min-w-0">
+          <div className="font-medium text-amber-200">In review (dispute window)</div>
+          <p className="text-xs text-slate-400">
+            The delivery is held in escrow and releases to the provider{' '}
+            {releaseAt ? until(releaseAt) : 'when the window ends'} unless you dispute it. Approve
+            now to pay immediately.
+          </p>
+        </div>
+        <div className="ml-auto">
+          <button
+            onClick={() => approve.mutate()}
+            disabled={approve.isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            <CheckCircle2 size={13} /> {approve.isPending ? 'Releasing…' : 'Approve & release now'}
+          </button>
+        </div>
+      </div>
+      {approve.error && (
+        <p className="mt-2 text-xs text-amber-300">
+          {(approve.error as Error).message || 'Could not approve right now.'}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -98,6 +158,8 @@ export function TaskDetail() {
               {task.mode} · created {fmt(task.createdAt)}
             </p>
           </div>
+
+          {task.awaitingApproval && <ReviewBanner task={task} />}
 
           <div className="grid grid-cols-3 gap-3">
             {[

@@ -66,6 +66,8 @@ export interface TaskStepView {
   latencyMs: number | null;
   error: string | null;
   output: string | null;
+  // When a T2 step is in its dispute window, the moment it auto-releases.
+  releaseAt?: string | null;
 }
 
 export interface Receipt {
@@ -83,6 +85,8 @@ export interface TaskDetail extends Task {
   description: string | null;
   steps: TaskStepView[];
   receipts: Receipt[];
+  // True while a T2 step is in its dispute window (buyer can approve early / dispute).
+  awaitingApproval?: boolean;
 }
 
 /** One task's full detail (steps + receipts): demo synthesises from local data. */
@@ -244,6 +248,15 @@ export async function raiseDispute(
   const signedXdr = await signTransaction(built.xdr, built.networkPassphrase);
   await apiPost<{ txHash: string }>('/vault/submit', { signedXdr });
   return built.dispute;
+}
+
+/**
+ * Approve a task's held T2 steps early: accept the delivery before the dispute
+ * window elapses so the provider is paid now. Returns how many steps were released.
+ */
+export async function approveTask(taskId: string): Promise<{ approved: number }> {
+  if (isDemo()) return { approved: 1 };
+  return apiPost<{ approved: number }>(`/tasks/${taskId}/approve`, {});
 }
 
 /** The buyer's disputes, newest first. */
