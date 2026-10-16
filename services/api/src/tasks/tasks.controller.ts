@@ -60,4 +60,10 @@ export class TasksController {
     const { reason } = parseBody(disputeSchema, body);
     return this.tasks.raiseDispute(user.userId, id, reason);
   }
+
+  /** Approve a task's held (T2) steps early, releasing before the dispute window ends. */
+  @Post(':id/approve')
+  approve(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.tasks.approve(user.userId, id);
+  }
 }

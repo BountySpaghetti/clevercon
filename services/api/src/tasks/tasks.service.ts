@@ -405,6 +405,52 @@ export class TasksService {
     return { id: d.id, status: d.status, createdAt: d.createdAt };
   }
 
+  /**
+   * Approve a task's held (T2) steps early: the buyer accepts the delivery before
+   * the dispute window elapses, so release + settlement happen now instead of
+   * waiting. Releases every AWAITING_APPROVAL step and enqueues its proof-gated
+   * settlement (the delayed window job later no-ops, since the step is no longer
+   * awaiting). Idempotent: a task with nothing held returns approved: 0. For a
+   * task not locked on-chain (no settlement to finalize it) it completes the task
+   * here once no step is still open.
+   */
+  async approve(userId: string, taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, buyerId: userId },
+      select: { id: true, vaultTaskId: true },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    const held = await this.prisma.taskStep.findMany({
+      where: { taskId, status: StepStatus.AWAITING_APPROVAL },
+      select: { id: true },
+    });
+    if (held.length === 0) return { approved: 0 };
+    for (const s of held) {
+      await this.prisma.taskStep.update({
+        where: { id: s.id },
+        data: { status: StepStatus.RELEASED, releaseAt: null },
+      });
+      await this.queue?.enqueueSettlement(s.id);
+    }
+    if (!task.vaultTaskId) {
+      const stillOpen = await this.prisma.taskStep.count({
+        where: {
+          taskId,
+          status: {
+            in: [StepStatus.PENDING, StepStatus.RUNNING, StepStatus.AWAITING_APPROVAL],
+          },
+        },
+      });
+      if (stillOpen === 0) {
+        await this.prisma.task.update({
+          where: { id: taskId },
+          data: { status: TaskStatus.COMPLETED },
+        });
+      }
+    }
+    return { approved: held.length };
+  }
+
   /** The current user's tasks, newest first. */
   async listForUser(userId: string, params: ListTasksParams) {
     const where: Prisma.TaskWhereInput = { buyerId: userId };
@@ -451,6 +497,9 @@ export class TasksService {
       asset: t.asset,
       stepCount: t.steps.length,
       completedSteps: t.steps.filter((s) => s.status === StepStatus.RELEASED).length,
+      // At least one T2 step is in its dispute window: the buyer can approve early
+      // (release now) or dispute before it auto-releases.
+      awaitingApproval: t.steps.some((s) => s.status === StepStatus.AWAITING_APPROVAL),
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
       steps: t.steps.map((s) => ({
@@ -461,6 +510,8 @@ export class TasksService {
         service: s.service?.name ?? null,
         latencyMs: s.latencyMs,
         error: s.error,
+        // When held, the moment it auto-releases if left undisputed (the countdown).
+        releaseAt: s.releaseAt,
         // The provider's returned result for this step, so the buyer sees what
         // they paid for (truncated to 2000 chars at execution time).
         output: s.output,
