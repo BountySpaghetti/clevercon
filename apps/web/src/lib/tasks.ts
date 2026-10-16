@@ -68,6 +68,9 @@ export interface TaskStepView {
   output: string | null;
   // When a T2 step is in its dispute window, the moment it auto-releases.
   releaseAt?: string | null;
+  // Advisory LLM-judge score (0-5) + one-line rationale; never gates payment.
+  qualityRating?: number | null;
+  qualityNote?: string | null;
 }
 
 export interface Receipt {

@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Clock,
   CheckCircle2,
+  Sparkles,
 } from 'lucide-react';
 import { getTask, raiseDispute, approveTask, type TaskDetail as TaskDetailData } from '../lib/tasks';
 import { config } from '../config';
@@ -203,6 +204,16 @@ export function TaskDetail() {
                         <div className={`text-xs ${tint(s.status)}`}>{s.status}</div>
                       </div>
                     </div>
+                    {s.qualityRating != null && (
+                      <div className="mt-2 flex items-start gap-1.5 text-[11px] text-sky-300">
+                        <Sparkles size={12} className="mt-0.5 shrink-0" />
+                        <span>
+                          Quality check: {s.qualityRating.toFixed(1)}/5
+                          {s.qualityNote ? ` · ${s.qualityNote}` : ''}
+                          <span className="text-slate-500"> (advisory, not a payment gate)</span>
+                        </span>
+                      </div>
+                    )}
                     {s.output && (
                       <pre className="mt-2 overflow-x-auto rounded-lg bg-black/30 p-2 text-[11px] text-slate-400">
                         {s.output}
