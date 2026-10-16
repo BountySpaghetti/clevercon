@@ -9,6 +9,7 @@ import {
   getFees,
   setFee,
   claimFees,
+  getMarketplaceAnalytics,
   getAdminServices,
   moderateService,
   getDisputes,
@@ -404,6 +405,80 @@ function UsersCard() {
   );
 }
 
+function MarketplaceAnalyticsCard() {
+  const { data } = useQuery({
+    queryKey: ['admin-marketplace'],
+    queryFn: getMarketplaceAnalytics,
+  });
+  if (!data) return null;
+  const topCat = data.byCategory[0]?.services ?? 0;
+  return (
+    <div className="rounded-2xl bg-white/[0.04] p-6">
+      <div className="flex items-center gap-2 text-slate-300">
+        <Boxes size={18} className="text-violet-300" />
+        <h2 className="font-semibold">Marketplace</h2>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          ['Active services', String(data.activeServices)],
+          ['Settled jobs', String(data.settledJobs)],
+          ['GMV', `$${data.gmvUsdc.toFixed(2)}`],
+          ['Tiers', data.byTier.map((t) => `${t.tier}:${t.services}`).join('  ') || '—'],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl bg-white/[0.04] p-3">
+            <div className="text-lg font-bold">{value}</div>
+            <div className="text-xs text-slate-500">{label}</div>
+          </div>
+        ))}
+      </div>
+      {data.topServices.length > 0 && (
+        <div className="mt-5">
+          <div className="text-xs uppercase tracking-wider text-slate-500">
+            Top services by settled volume
+          </div>
+          <div className="mt-2 space-y-2">
+            {data.topServices.map((s) => (
+              <div key={s.name} className="flex items-center justify-between gap-3 text-sm">
+                <span className="min-w-0 truncate text-slate-300">
+                  {s.name} <span className="text-xs text-slate-600">{s.tier}</span>
+                </span>
+                <span className="shrink-0 text-slate-400">
+                  {s.settlements} jobs
+                  <span className="ml-1 text-xs text-slate-600">· {s.score.toFixed(1)}★</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {data.byCategory.length > 0 && (
+        <div className="mt-5">
+          <div className="text-xs uppercase tracking-wider text-slate-500">By category</div>
+          <div className="mt-2 space-y-1.5">
+            {data.byCategory.map((c) => {
+              const pct = topCat > 0 ? Math.round((c.services / topCat) * 100) : 0;
+              return (
+                <div key={c.category}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-slate-300">{c.category}</span>
+                    <span className="text-slate-400">{c.services}</span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-violet-500 to-indigo-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Admin() {
   return (
     <section className="space-y-6">
@@ -413,6 +488,7 @@ export function Admin() {
       </div>
 
       <StatTiles />
+      <MarketplaceAnalyticsCard />
       <ActivationFunnelCard />
       <FeesCard />
       <ServicesModerationCard />

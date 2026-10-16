@@ -75,6 +75,32 @@ export async function getActivation(): Promise<Activation> {
   return apiFetch<Activation>('/admin/activation');
 }
 
+export interface MarketplaceAnalytics {
+  activeServices: number;
+  totalServices: number;
+  settledJobs: number;
+  gmvUsdc: number;
+  byTier: { tier: string; services: number }[];
+  byCategory: { category: string; services: number }[];
+  topServices: { name: string; tier: string; settlements: number; score: number }[];
+}
+
+/** Marketplace health: directory shape + real settled-job traction. */
+export async function getMarketplaceAnalytics(): Promise<MarketplaceAnalytics> {
+  if (isDemo()) {
+    return {
+      activeServices: demoPlatform.activeServices,
+      totalServices: demoPlatform.activeServices,
+      settledJobs: 0,
+      gmvUsdc: 0,
+      byTier: [],
+      byCategory: [],
+      topServices: [],
+    };
+  }
+  return apiFetch<MarketplaceAnalytics>('/admin/marketplace');
+}
+
 export async function getAdminUsers(): Promise<AdminUser[]> {
   if (isDemo()) return [];
   const res = await apiFetch<{ items: AdminUser[] }>('/admin/users');

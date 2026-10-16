@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, PaymentStatus, Role, ServiceStatus } from '@clevercon/db';
+import { Prisma, PaymentMethod, PaymentStatus, Role, ServiceStatus } from '@clevercon/db';
 import type { AppEnv } from '../config/env.validation.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { VaultContractService } from '../vault/vault-contract.service.js';
@@ -79,6 +79,61 @@ export class AdminService {
       paymentsVolumeUsdc: Number(confirmed._sum.amount ?? new Prisma.Decimal(0)),
       tvlUsdc: Number(tvl._sum.balance ?? new Prisma.Decimal(0)),
       lockedUsdc: Number(tvl._sum.locked ?? new Prisma.Decimal(0)),
+    };
+  }
+
+  /**
+   * Marketplace health: the directory's shape and real settled-job traction.
+   * GMV + settled-job counts are from CONFIRMED VAULT_RELEASE payments bound to a
+   * step (genuine provider settlements, never direct pay/disburse), so they
+   * reflect actual marketplace activity. Tier/category breakdowns + the top
+   * services by settled volume round out the picture. All first-party aggregates.
+   */
+  async marketplaceAnalytics() {
+    const [activeServices, totalServices, settled, byTierRaw, byCategoryRaw, topReps] =
+      await Promise.all([
+        this.prisma.service.count({
+          where: { status: { in: [ServiceStatus.ACTIVE, ServiceStatus.NEW] } },
+        }),
+        this.prisma.service.count(),
+        this.prisma.payment.aggregate({
+          where: {
+            status: PaymentStatus.CONFIRMED,
+            method: PaymentMethod.VAULT_RELEASE,
+            stepId: { not: null },
+          },
+          _sum: { amount: true },
+          _count: true,
+        }),
+        this.prisma.service.groupBy({ by: ['tier'], _count: { _all: true } }),
+        this.prisma.service.groupBy({ by: ['category'], _count: { _all: true } }),
+        this.prisma.serviceReputation.findMany({
+          orderBy: { successfulJobs: 'desc' },
+          take: 5,
+          include: { service: { select: { name: true, tier: true } } },
+        }),
+      ]);
+
+    return {
+      activeServices,
+      totalServices,
+      settledJobs: settled._count,
+      gmvUsdc: Number(settled._sum.amount ?? new Prisma.Decimal(0)),
+      byTier: byTierRaw
+        .map((r) => ({ tier: r.tier, services: r._count._all }))
+        .sort((a, b) => a.tier.localeCompare(b.tier)),
+      byCategory: byCategoryRaw
+        .map((r) => ({ category: r.category ?? 'uncategorized', services: r._count._all }))
+        .sort((a, b) => b.services - a.services)
+        .slice(0, 8),
+      topServices: topReps
+        .filter((r) => r.service && r.successfulJobs > 0)
+        .map((r) => ({
+          name: r.service!.name,
+          tier: r.service!.tier,
+          settlements: r.successfulJobs,
+          score: r.score,
+        })),
     };
   }
 

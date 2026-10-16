@@ -52,6 +52,11 @@ export class AdminController {
     return this.admin.activation();
   }
 
+  @Get('marketplace')
+  marketplace() {
+    return this.admin.marketplaceAnalytics();
+  }
+
   @Get('users')
   users(@Query() query: unknown) {
     const { limit, offset } = parseBody(listQuery, query);
