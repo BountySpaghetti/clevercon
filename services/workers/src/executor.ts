@@ -252,11 +252,17 @@ export async function executeTask(
       // A provider may return a file as an ArtifactRef {url, hash, contentType,
       // size}; persist it so the buyer can download + verify it (content-hash).
       const artifact = (envelope.artifact ?? null) as object | null;
-      // T2 (Attestable) steps that pass acceptance are held for a dispute window
-      // instead of releasing immediately: the buyer can approve early or dispute
-      // (the lock is the escrow). T1 is trustless (already verified) and releases
-      // now; with the window disabled (0), T2 also releases now.
-      const held = step.service?.tier === 'T2' && windowSec > 0;
+      // Hold the payout after acceptance for the human-in-the-loop tiers:
+      //  - T2 (Attestable): held for a dispute window, then auto-releases unless
+      //    the buyer approves early or disputes (the lock is the escrow).
+      //  - T3 (Human): held indefinitely until the buyer explicitly approves (no
+      //    timer); for milestone/approval work where only the buyer can judge.
+      // T1 is trustless (already verified) and releases now; with the window
+      // disabled (0), T2 also releases now, but T3 always holds.
+      const tier = step.service?.tier;
+      const isT2Window = tier === 'T2' && windowSec > 0;
+      const isT3 = tier === 'T3';
+      const held = isT2Window || isT3;
       if (held) {
         await prisma.taskStep.update({
           where: { id: step.id },
@@ -265,7 +271,8 @@ export async function executeTask(
             output: storedOutput,
             latencyMs,
             error: null,
-            releaseAt: new Date(Date.now() + windowSec * 1000),
+            // T2 carries a countdown to auto-release; T3 waits for approval (no timer).
+            ...(isT2Window ? { releaseAt: new Date(Date.now() + windowSec * 1000) } : {}),
             ...(artifact ? { artifact } : {}),
           },
         });
@@ -289,12 +296,15 @@ export async function executeTask(
         } catch {
           // judging is advisory; never fail the step over it
         }
-        // Schedule the auto-release at the end of the window (idempotent jobId).
-        try {
-          await scheduleRelease(step.id, windowSec * 1000);
-        } catch {
-          // The window can be driven later (approve-early or a re-schedule); the
-          // step is safely parked AWAITING_APPROVAL in the meantime.
+        // Only T2 schedules a timed auto-release; a T3 step is released solely by
+        // the buyer's explicit approval (POST /tasks/:id/approve).
+        if (isT2Window) {
+          try {
+            await scheduleRelease(step.id, windowSec * 1000);
+          } catch {
+            // The window can be driven later (approve-early or a re-schedule); the
+            // step is safely parked AWAITING_APPROVAL in the meantime.
+          }
         }
       } else {
         await prisma.taskStep.update({

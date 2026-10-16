@@ -306,6 +306,21 @@ describe('executeTask T2 dispute window', () => {
     expect(task.steps[0].status).toBe('AWAITING_APPROVAL');
     expect(task.steps[0].qualityRating ?? null).toBeNull();
   });
+
+  it('holds a T3 step for human approval with no auto-release timer', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '0'; // T3 holds regardless of the window
+    const task = t2Task('tw6');
+    task.steps[0].service = { endpoint: 'https://svc.test', tier: 'T3' };
+    const scheduleRelease = vi.fn(async () => {});
+    const res = await executeTask(mockPrisma(task), okFetch as unknown as typeof fetch, 'tw6', {
+      scheduleRelease,
+    });
+    expect(res.status).toBe('awaiting');
+    expect(task.status).toBe('RUNNING');
+    expect(task.steps[0].status).toBe('AWAITING_APPROVAL');
+    expect(task.steps[0].releaseAt ?? null).toBeNull(); // no timed release
+    expect(scheduleRelease).not.toHaveBeenCalled(); // waits for the buyer
+  });
 });
 
 interface HeldStep {

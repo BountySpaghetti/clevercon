@@ -72,11 +72,21 @@ function ReviewBanner({ task }: { task: TaskDetailData }) {
       <div className="flex flex-wrap items-center gap-3">
         <Clock size={18} className="shrink-0 text-amber-300" />
         <div className="min-w-0">
-          <div className="font-medium text-amber-200">In review (dispute window)</div>
+          <div className="font-medium text-amber-200">
+            {releaseAt ? 'In review (dispute window)' : 'Awaiting your approval'}
+          </div>
           <p className="text-xs text-slate-400">
-            The delivery is held in escrow and releases to the provider{' '}
-            {releaseAt ? until(releaseAt) : 'when the window ends'} unless you dispute it. Approve
-            now to pay immediately.
+            {releaseAt ? (
+              <>
+                The delivery is held in escrow and releases to the provider {until(releaseAt)}{' '}
+                unless you dispute it. Approve now to pay immediately.
+              </>
+            ) : (
+              <>
+                The delivery is held in escrow and waits for your approval before the provider is
+                paid. Approve to release, or dispute if it is not acceptable.
+              </>
+            )}
           </p>
         </div>
         <div className="ml-auto">
