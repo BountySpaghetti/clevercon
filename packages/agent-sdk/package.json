@@ -30,6 +30,10 @@
     "./verifier": {
       "types": "./dist/verifier.d.ts",
       "default": "./dist/verifier.js"
+    },
+    "./discovery": {
+      "types": "./dist/discovery.d.ts",
+      "default": "./dist/discovery.js"
     }
   },
   "typesVersions": {
@@ -48,6 +52,9 @@
       ],
       "verifier": [
         "./dist/verifier.d.ts"
+      ],
+      "discovery": [
+        "./dist/discovery.d.ts"
       ]
     }
   },

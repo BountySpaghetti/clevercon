@@ -101,3 +101,13 @@ export type {
   JobRequestEnvelope,
   JobResultEnvelope,
 } from './marketplace.js';
+
+// Marketplace discovery: find + inspect services in the public directory (P3.4).
+export { createMarketplaceClient } from './discovery.js';
+export type {
+  MarketplaceClient,
+  MarketplaceClientOptions,
+  DiscoveredService,
+  DiscoveryFilters,
+  ServiceSort,
+} from './discovery.js';
