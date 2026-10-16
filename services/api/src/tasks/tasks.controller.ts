@@ -20,6 +20,9 @@ const createSchema = z.object({
   serviceId: z.string().optional(),
   policyId: z.string().optional(),
   description: z.string().max(2000).optional(),
+  // Structured job input for the provider (validated against the service's
+  // inputSchema by the worker); may carry an attachment ArtifactRef.
+  input: z.record(z.unknown()).optional(),
   // Also accepted in the body for clients that cannot set a header.
   idempotencyKey: z.string().min(1).max(255).optional(),
 });

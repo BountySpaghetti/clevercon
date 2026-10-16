@@ -29,6 +29,8 @@ export interface CreateTaskParams {
   serviceId?: string;
   policyId?: string;
   description?: string;
+  /** Structured job input for the provider (e.g. an attachment ArtifactRef). */
+  input?: Record<string, unknown>;
   /** Client-supplied Idempotency-Key: a retry with the same key returns the original task. */
   idempotencyKey?: string;
 }
@@ -184,6 +186,7 @@ export class TasksService {
             service: { connect: { id: service.id } },
             estimatedCost: service.pricePerCall,
             status: StepStatus.PENDING,
+            ...(params.input ? { input: params.input as Prisma.InputJsonValue } : {}),
           },
         ],
       };

@@ -11,23 +11,32 @@ import {
   Award,
   Lock,
   ShieldCheck,
+  Paperclip,
+  X,
 } from 'lucide-react';
 import { getService, tierLabel, verificationBlurb } from '../lib/services';
 import { createTask } from '../lib/tasks';
+import { uploadFile } from '../lib/uploads';
 
 function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [budget, setBudget] = useState('');
+  const [file, setFile] = useState<File | null>(null);
 
   const hire = useMutation({
-    mutationFn: () =>
-      createTask({
+    mutationFn: async () => {
+      // Attach a file (if any) first: upload straight to R2, then hire with the
+      // resulting ArtifactRef as the job input for the provider.
+      const input = file ? { attachment: await uploadFile(file) } : undefined;
+      return createTask({
         title: `Pay ${serviceName}`,
         mode: 'DIRECT',
         budget: Number(budget),
         serviceId,
-      }),
+        ...(input ? { input } : {}),
+      });
+    },
     onSuccess: (task) => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
       navigate(`/app/tasks/${task.id}`);
@@ -59,14 +68,41 @@ function HireBox({ serviceId, serviceName }: { serviceId: string; serviceName: s
         placeholder="Budget (USDC)"
         className="mt-4 w-full rounded-lg bg-black/30 px-3 py-2 text-sm outline-none focus:border-violet-500/40"
       />
+      {file ? (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-black/30 px-3 py-2 text-xs text-slate-300">
+          <Paperclip size={12} className="shrink-0 text-violet-300" />
+          <span className="min-w-0 flex-1 truncate">{file.name}</span>
+          <button
+            type="button"
+            onClick={() => setFile(null)}
+            className="shrink-0 text-slate-500 hover:text-white"
+            aria-label="Remove attachment"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ) : (
+        <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-2 text-xs text-slate-400 hover:border-violet-500/40 hover:text-slate-300">
+          <Paperclip size={12} /> Attach a file (optional)
+          <input
+            type="file"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </label>
+      )}
       <button
         type="submit"
         disabled={!canSubmit}
         className="mt-3 w-full rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {hire.isPending ? 'Creating…' : 'Hire now'}
+        {hire.isPending ? (file ? 'Uploading + creating…' : 'Creating…') : 'Hire now'}
       </button>
-      {hire.error && <p className="mt-2 text-sm text-red-400">Could not create the job.</p>}
+      {hire.error && (
+        <p className="mt-2 text-sm text-red-400">
+          {(hire.error as Error).message || 'Could not create the job.'}
+        </p>
+      )}
     </form>
   );
 }

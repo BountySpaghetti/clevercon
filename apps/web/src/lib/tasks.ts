@@ -141,6 +141,8 @@ export interface CreateTaskInput {
   serviceId?: string;
   policyId?: string;
   description?: string;
+  // Structured job input for the provider (e.g. { attachment: ArtifactRef }).
+  input?: Record<string, unknown>;
 }
 
 /** Create a task (hire). In demo mode this returns a local stand-in. */
