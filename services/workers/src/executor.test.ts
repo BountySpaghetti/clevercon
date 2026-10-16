@@ -19,6 +19,8 @@ interface Step {
   error?: string | null;
   latencyMs?: number | null;
   releaseAt?: Date | null;
+  qualityRating?: number | null;
+  qualityNote?: string | null;
 }
 interface Task {
   id: string;
@@ -277,6 +279,32 @@ describe('executeTask T2 dispute window', () => {
     });
     expect(res.status).toBe('awaiting');
     expect(spy).not.toHaveBeenCalled(); // provider not called again
+  });
+
+  it('annotates a held step with the advisory judge verdict', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '3600';
+    const task = t2Task('tw4');
+    const judge = vi.fn(async () => ({ rating: 4.5, note: 'matches the request' }));
+    const res = await executeTask(mockPrisma(task), okFetch as unknown as typeof fetch, 'tw4', {
+      scheduleRelease: vi.fn(async () => {}),
+      judge,
+    });
+    expect(res.status).toBe('awaiting');
+    expect(judge).toHaveBeenCalledOnce();
+    expect(task.steps[0].qualityRating).toBe(4.5);
+    expect(task.steps[0].qualityNote).toBe('matches the request');
+  });
+
+  it('holds normally when the judge is unavailable (returns null)', async () => {
+    process.env.DISPUTE_WINDOW_SECONDS = '3600';
+    const task = t2Task('tw5');
+    const res = await executeTask(mockPrisma(task), okFetch as unknown as typeof fetch, 'tw5', {
+      scheduleRelease: vi.fn(async () => {}),
+      judge: vi.fn(async () => null),
+    });
+    expect(res.status).toBe('awaiting');
+    expect(task.steps[0].status).toBe('AWAITING_APPROVAL');
+    expect(task.steps[0].qualityRating ?? null).toBeNull();
   });
 });
 

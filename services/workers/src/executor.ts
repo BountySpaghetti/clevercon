@@ -9,6 +9,7 @@ import {
 } from '@clevercon/common';
 import { enqueueSettlement, enqueueStepRelease } from './queue.js';
 import { finalizeTaskIfComplete } from './settlement.js';
+import { judgeDelivery, type JudgeInput, type JudgeVerdict } from './judge.js';
 
 export interface ExecuteResult {
   // `awaiting` = the task ran but is holding at least one T2 step for its dispute
@@ -27,6 +28,8 @@ export interface ExecuteResult {
 export interface ExecuteDeps {
   scheduleRelease?: (stepId: string, delayMs: number) => Promise<void>;
   enqueueSettle?: (stepId: string) => Promise<void>;
+  /** Advisory quality judge for held T2 steps (defaults to the Anthropic judge). */
+  judge?: (args: JudgeInput) => Promise<JudgeVerdict | null>;
 }
 
 type FetchImpl = typeof fetch;
@@ -165,6 +168,7 @@ export async function executeTask(
 ): Promise<ExecuteResult> {
   const scheduleRelease = deps.scheduleRelease ?? enqueueStepRelease;
   const enqueueSettle = deps.enqueueSettle ?? enqueueSettlement;
+  const judge = deps.judge ?? judgeDelivery;
   const windowSec = disputeWindowSeconds();
   const task = await prisma.task.findUnique({
     where: { id: taskId },
@@ -263,6 +267,24 @@ export async function executeTask(
         });
         if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
         anyHeld = true;
+        // Advisory quality signal for the buyer during the window: never gates
+        // payment, never auto-releases/disputes. No-ops without ANTHROPIC_API_KEY.
+        try {
+          const verdict = await judge({
+            description: step.service?.description ?? step.action,
+            action: step.action,
+            input,
+            output: envelope.data,
+          });
+          if (verdict) {
+            await prisma.taskStep.update({
+              where: { id: step.id },
+              data: { qualityRating: verdict.rating, qualityNote: verdict.note || null },
+            });
+          }
+        } catch {
+          // judging is advisory; never fail the step over it
+        }
         // Schedule the auto-release at the end of the window (idempotent jobId).
         try {
           await scheduleRelease(step.id, windowSec * 1000);

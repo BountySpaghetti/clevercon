@@ -331,7 +331,8 @@ model TaskStep {
   status        StepStatus @default(PENDING)
   output        String?
   error         String?
-  qualityRating Float?
+  qualityRating Float? // advisory LLM-judge score (0-5) of the delivery vs the service rubric
+  qualityNote   String? // one-line rationale from the judge (advisory; never gates payment)
   latencyMs     Int?
   releaseAt     DateTime? // T2 dispute window: when a held step auto-releases if undisputed
   createdAt     DateTime   @default(now())
