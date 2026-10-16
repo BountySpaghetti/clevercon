@@ -30,6 +30,7 @@ import { getServiceHandler, getServiceSchema } from './tools/discovery.js';
 import { hireAgentHandler, hireAgentSchema } from './tools/hire-agent.js';
 import { listTasksHandler, listTasksSchema } from './tools/list-tasks.js';
 import { getTaskHandler, getTaskSchema } from './tools/get-task.js';
+import { approveTaskHandler, approveTaskSchema } from './tools/approve-task.js';
 import { disputeTaskHandler, disputeTaskSchema } from './tools/dispute-task.js';
 import {
   payHandler,
@@ -87,6 +88,7 @@ class CleverConMCPServer {
         getActivitySchema,
         listTasksSchema,
         getTaskSchema,
+        approveTaskSchema,
         disputeTaskSchema,
       ],
     }));
@@ -119,6 +121,8 @@ class CleverConMCPServer {
             return await listTasksHandler(args || {}, this.config);
           case 'get_task':
             return await getTaskHandler(args || {}, this.config);
+          case 'approve_task':
+            return await approveTaskHandler(args || {}, this.config);
           case 'dispute_task':
             return await disputeTaskHandler(args || {}, this.config);
           default:
