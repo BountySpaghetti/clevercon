@@ -8,6 +8,7 @@ import {
   setUserRole,
   getFees,
   setFee,
+  claimFees,
   getAdminServices,
   moderateService,
   getDisputes,
@@ -184,6 +185,10 @@ function FeesCard() {
       qc.invalidateQueries({ queryKey: ['admin-fees'] });
     },
   });
+  const claim = useMutation({
+    mutationFn: () => claimFees(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-fees'] }),
+  });
 
   return (
     <div className="rounded-2xl bg-white/[0.04] p-6">
@@ -204,7 +209,17 @@ function FeesCard() {
             </div>
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-500">Accrued</div>
-              <div className="text-lg font-bold">${fees.accruedUsdc.toFixed(2)}</div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold">${fees.accruedUsdc.toFixed(2)}</span>
+                <button
+                  type="button"
+                  onClick={() => claim.mutate()}
+                  disabled={fees.accruedUsdc <= 0 || claim.isPending}
+                  className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40"
+                >
+                  {claim.isPending ? 'Claiming…' : 'Claim'}
+                </button>
+              </div>
             </div>
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-500">Recipient</div>
@@ -238,6 +253,12 @@ function FeesCard() {
             </button>
           </form>
           {save.error && <p className="mt-2 text-sm text-red-400">Could not update the fee.</p>}
+          {claim.error && (
+            <p className="mt-2 text-xs text-amber-300">
+              {(claim.error as Error).message || 'Could not claim fees.'} The vault requires the
+              fee recipient to be the orchestrator key for console claims.
+            </p>
+          )}
         </>
       )}
     </div>

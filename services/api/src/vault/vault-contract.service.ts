@@ -440,4 +440,27 @@ export class VaultContractService {
     ]);
     return hash;
   }
+
+  /**
+   * Claim all accrued USDC fees to the configured recipient (admin). The vault's
+   * claim_fees requires the recipient to authorize, so this succeeds when the fee
+   * recipient is the orchestrator/admin key (the recommended setup); otherwise the
+   * recipient claims from their own wallet. Returns the tx hash and amount (USDC).
+   */
+  async claimFees(): Promise<{ txHash: string; claimedUsdc: number }> {
+    if (!this.feeAdminEnabled) {
+      throw new ServiceUnavailableException('VAULT_ADMIN_KEY not configured');
+    }
+    const { recipient } = await this.getFee();
+    if (!recipient) {
+      throw new ServiceUnavailableException('No fee recipient configured on the vault');
+    }
+    const claimedUsdc = await this.getAccruedFeesUsdc();
+    const kp = Keypair.fromSecret(this.adminKey);
+    const { hash } = await this.signAndSubmitAsOrchestrator(kp, 'claim_fees', [
+      new Address(recipient).toScVal(),
+      this.usdcSacScVal(),
+    ]);
+    return { txHash: hash, claimedUsdc };
+  }
 }

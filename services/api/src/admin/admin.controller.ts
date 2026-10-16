@@ -103,4 +103,10 @@ export class AdminController {
     const { bps, recipient } = parseBody(feeSchema, body);
     return this.admin.setFee(bps, recipient);
   }
+
+  /** Claim accrued protocol fees to the configured recipient. */
+  @Post('fees/claim')
+  claimFees() {
+    return this.admin.claimFees();
+  }
 }

@@ -39,6 +39,15 @@ export class AdminService {
     return { txHash, ...(await this.fees()) };
   }
 
+  /** Claim accrued protocol fees to the configured recipient (admin). */
+  async claimFees() {
+    if (!this.vault?.feeAdminEnabled) {
+      throw new BadRequestException('Fee administration is not configured');
+    }
+    const { txHash, claimedUsdc } = await this.vault.claimFees();
+    return { txHash, claimedUsdc, ...(await this.fees()) };
+  }
+
   /** Real platform metrics, read from the DB mirror (no fabricated numbers). */
   async stats() {
     const [users, activeServices, totalServices, tasks, confirmed] = await Promise.all([

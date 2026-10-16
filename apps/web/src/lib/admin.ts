@@ -171,3 +171,8 @@ export async function getFees(): Promise<FeeConfig> {
 export async function setFee(bps: number, recipient?: string): Promise<FeeConfig> {
   return apiPost<FeeConfig>('/admin/fees', { bps, ...(recipient ? { recipient } : {}) });
 }
+
+/** Claim accrued protocol fees to the configured recipient. */
+export async function claimFees(): Promise<FeeConfig & { txHash: string; claimedUsdc: number }> {
+  return apiPost<FeeConfig & { txHash: string; claimedUsdc: number }>('/admin/fees/claim', {});
+}
