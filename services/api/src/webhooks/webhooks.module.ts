@@ -7,5 +7,6 @@ import { WebhooksController } from './webhooks.controller.js';
   imports: [AuthModule], // provides JwtAuthGuard
   controllers: [WebhooksController],
   providers: [WebhooksService],
+  exports: [WebhooksService], // disputes delivers API-originated events through it
 })
 export class WebhooksModule {}

@@ -3,10 +3,13 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { DisputeStatus } from '@clevercon/db';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { VaultContractService } from '../vault/vault-contract.service.js';
+import { EventsGateway } from '../events/events.gateway.js';
+import { WebhooksService, type WebhookEvent } from '../webhooks/webhooks.service.js';
 
 /**
  * Buyer-facing disputes. Opening a dispute records it and returns the unsigned
@@ -21,7 +24,30 @@ export class DisputesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly contract: VaultContractService,
+    @Optional() private readonly events?: EventsGateway,
+    @Optional() private readonly webhooks?: WebhooksService,
   ) {}
+
+  /** The distinct provider (service owner) ids on a task's steps. */
+  private async providerIdsForTask(taskId: string): Promise<string[]> {
+    const steps = await this.prisma.taskStep.findMany({
+      where: { taskId },
+      select: { service: { select: { providerId: true } } },
+    });
+    return [...new Set(steps.map((s) => s.service?.providerId).filter((x): x is string => !!x))];
+  }
+
+  /** Notify a set of users on both channels (real-time socket + webhook). */
+  private async notify(
+    userIds: string[],
+    event: WebhookEvent,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    for (const uid of new Set(userIds)) {
+      this.events?.emitToUser(uid, event, payload);
+      await this.webhooks?.deliver(uid, event, payload);
+    }
+  }
 
   async open(userId: string, taskId: string, reason?: string) {
     const task = await this.prisma.task.findUnique({
@@ -42,6 +68,13 @@ export class DisputesService {
 
     const dispute = await this.prisma.dispute.create({
       data: { taskId, raisedBy: wallet.address, reason: reason ?? null, status: DisputeStatus.OPEN },
+    });
+    // Let the provider(s) on this task know a dispute was raised (both channels).
+    const providerIds = await this.providerIdsForTask(taskId);
+    await this.notify(providerIds, 'dispute.opened', {
+      disputeId: dispute.id,
+      taskId,
+      reason: reason ?? null,
     });
     // The buyer signs this and submits it (POST /vault/submit) to freeze the task.
     const xdr = await this.contract.buildRaiseDisputeXdr(wallet.address, BigInt(task.vaultTaskId));
@@ -109,7 +142,9 @@ export class DisputesService {
   ) {
     const d = await this.prisma.dispute.findUnique({
       where: { id },
-      include: { task: { select: { vaultTaskId: true, steps: { select: { serviceId: true } } } } },
+      include: {
+        task: { select: { buyerId: true, vaultTaskId: true, steps: { select: { serviceId: true } } } },
+      },
     });
     if (!d) throw new NotFoundException('Dispute not found');
     if (d.status !== DisputeStatus.OPEN) throw new BadRequestException('dispute already resolved');
@@ -144,6 +179,16 @@ export class DisputesService {
         })
         .catch(() => {});
     }
+    // Notify the buyer and the provider(s) of the outcome (both channels).
+    const providerIds = await this.providerIdsForTask(d.taskId);
+    await this.notify([d.task.buyerId, ...providerIds], 'dispute.resolved', {
+      disputeId: id,
+      taskId: d.taskId,
+      upheld: params.upheld,
+      refundToUser: params.refundToUser,
+      payoutToProvider: params.payoutToProvider,
+      txHash,
+    });
     return { ok: true, txHash };
   }
 }
