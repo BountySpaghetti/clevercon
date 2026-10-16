@@ -137,11 +137,23 @@ export async function getDisputes(): Promise<AdminDispute[]> {
   return res.items;
 }
 
+/**
+ * Settle a dispute on-chain: signs resolve_dispute with the platform resolver key
+ * and splits the locked remainder (the vault enforces refund + payout == plan_cost
+ * - spent), then records the outcome + reputation. Needs the resolver configured
+ * (DISPUTE_RESOLVER_SECRET + set_dispute_resolver); otherwise the API returns a
+ * clear "not configured" error.
+ */
 export async function resolveDispute(
   id: string,
-  body: { resolution: string; refundToUser?: number; payoutToProvider?: number; reject?: boolean },
-): Promise<{ id: string; status: string }> {
-  return apiPost<{ id: string; status: string }>(`/admin/disputes/${id}/resolve`, body);
+  body: {
+    refundToUser: number;
+    payoutToProvider: number;
+    upheld: boolean;
+    resolution: string;
+  },
+): Promise<{ ok: boolean; txHash?: string }> {
+  return apiPost<{ ok: boolean; txHash?: string }>(`/disputes/${id}/resolve`, body);
 }
 
 export interface FeeConfig {

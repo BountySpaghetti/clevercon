@@ -23,11 +23,15 @@ function DisputesCard() {
     error,
   } = useQuery({ queryKey: ['admin-disputes'], queryFn: getDisputes });
   const act = useMutation({
+    // On-chain settlement: the vault splits the still-locked remainder. "Refund
+    // buyer" upholds the dispute and sends the budget back; "Reject" pays it to
+    // the provider. (For a partial split, extend this to collect two amounts.)
     mutationFn: (v: { id: string; reject: boolean; budget: number }) =>
       resolveDispute(v.id, {
         resolution: v.reject ? 'Rejected by operator' : 'Refunded to buyer',
-        reject: v.reject,
-        refundToUser: v.reject ? undefined : v.budget,
+        upheld: !v.reject,
+        refundToUser: v.reject ? 0 : v.budget,
+        payoutToProvider: v.reject ? v.budget : 0,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-disputes'] }),
   });
@@ -93,6 +97,11 @@ function DisputesCard() {
         ))}
       </div>
       {open.length > 0 && <p className="mt-3 text-xs text-slate-500">{open.length} open</p>}
+      {act.error && (
+        <p className="mt-3 text-xs text-amber-300">
+          {(act.error as Error).message || 'Could not settle the dispute on-chain.'}
+        </p>
+      )}
     </div>
   );
 }
