@@ -75,6 +75,12 @@ export interface SettleResult {
   txHash?: string;
   buyerId?: string;
   taskId?: string;
+  /** The paid provider (service owner), so the worker can send a payout alert. */
+  providerId?: string;
+  /** The amount paid to the provider (USDC), for the payout alert. */
+  amountUsdc?: number;
+  /** The service that was paid, for the payout alert. */
+  serviceName?: string;
   /**
    * Only set on `failed`. True when the failure is transient (RPC blip, timeout,
    * sequence contention) and the caller should let the queue retry; false when it
@@ -413,7 +419,15 @@ export async function settleStep(
   }
 
   logger.info({ stepId, txHash, amountUsdc }, 'step settled');
-  return { status: 'settled', txHash, buyerId, taskId: step.taskId };
+  return {
+    status: 'settled',
+    txHash,
+    buyerId,
+    taskId: step.taskId,
+    providerId: step.service?.providerId ?? undefined,
+    amountUsdc,
+    serviceName: step.service?.name,
+  };
 }
 
 /** The job payload for a pp/2 batch release (all JSON-safe; the client proved). */

@@ -112,6 +112,19 @@ function main(): void {
           txHash: result.txHash,
         });
       }
+      // Payout alert to the provider: real-time ping + their webhooks ("you got
+      // paid"). Only on a genuine settlement, so it reflects money that moved.
+      if (result.providerId && result.status === 'settled') {
+        const paid = {
+          stepId: job.data.stepId,
+          taskId: result.taskId,
+          amountUsdc: result.amountUsdc,
+          service: result.serviceName,
+          txHash: result.txHash,
+        };
+        emitter.to(`user:${result.providerId}`).emit('job.paid', paid);
+        await deliverWebhooks(prisma, result.providerId, 'job.paid', paid);
+      }
       // A transient failure (RPC blip, timeout, sequence contention) should retry
       // with backoff: throw so BullMQ re-runs the job (settleStep is idempotent,
       // so a replayed release/lock never moves funds twice). A deterministic

@@ -2,8 +2,18 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-/** Events a webhook can subscribe to. Delivered by the worker as they happen. */
-export const WEBHOOK_EVENTS = ['task.completed', 'task.failed'] as const;
+/**
+ * Events a webhook can subscribe to. Buyer-side: task.completed/failed and
+ * dispute.resolved. Provider-side: job.paid (a settlement paid you) and
+ * dispute.opened (a job you fulfilled was disputed). Delivered as they happen.
+ */
+export const WEBHOOK_EVENTS = [
+  'task.completed',
+  'task.failed',
+  'job.paid',
+  'dispute.opened',
+  'dispute.resolved',
+] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
 @Injectable()

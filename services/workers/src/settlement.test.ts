@@ -10,7 +10,7 @@ interface StepRow {
   taskId: string;
   estimatedCost: string;
   serviceId: string | null;
-  service: { stellarAddress: string } | null;
+  service: { stellarAddress: string; providerId?: string; name?: string } | null;
   task: {
     buyerId: string;
     vaultTaskId: bigint | null;
@@ -71,7 +71,7 @@ function baseStep(over: Partial<StepRow> = {}): StepRow {
     taskId: 't1',
     estimatedCost: '0.05',
     serviceId: 'svc1',
-    service: { stellarAddress: PAYEE },
+    service: { stellarAddress: PAYEE, providerId: 'prov1', name: 'Test Service' },
     task: {
       buyerId: 'buyer1',
       vaultTaskId: 7n,
@@ -130,7 +130,14 @@ describe('settleStep guards', () => {
       expect.anything(),
       expect.objectContaining({ taskId: 99n }),
     );
-    expect(r).toMatchObject({ status: 'settled', txHash: 'TXHASH_TEST' });
+    expect(r).toMatchObject({
+      status: 'settled',
+      txHash: 'TXHASH_TEST',
+      // Payout-alert fields so the worker can notify the paid provider.
+      providerId: 'prov1',
+      serviceName: 'Test Service',
+    });
+    expect(r.amountUsdc).toBeCloseTo(0.05);
     expect(created).toHaveLength(1);
   });
 
