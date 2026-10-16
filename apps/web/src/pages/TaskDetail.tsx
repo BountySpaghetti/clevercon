@@ -10,6 +10,7 @@ import {
   Clock,
   CheckCircle2,
   Sparkles,
+  Download,
 } from 'lucide-react';
 import { getTask, raiseDispute, approveTask, type TaskDetail as TaskDetailData } from '../lib/tasks';
 import { config } from '../config';
@@ -121,6 +122,17 @@ function fmt(v: string): string {
   return Number.isNaN(t) ? v : new Date(t).toLocaleString();
 }
 
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Public-bucket artifacts carry an absolute URL; a relative one resolves via the API. */
+function resolveArtifactUrl(url: string): string {
+  return /^https?:\/\//.test(url) ? url : `${config.apiUrl}${url}`;
+}
+
 export function TaskDetail() {
   const { id = '' } = useParams();
   const {
@@ -213,6 +225,21 @@ export function TaskDetail() {
                           <span className="text-slate-500"> (advisory, not a payment gate)</span>
                         </span>
                       </div>
+                    )}
+                    {s.artifact && (
+                      <a
+                        href={resolveArtifactUrl(s.artifact.url)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-white/[0.05] px-2.5 py-1 text-[11px] text-violet-300 hover:bg-white/10"
+                        title={s.artifact.hash ?? undefined}
+                      >
+                        <Download size={12} /> Download file · {s.artifact.contentType} ·{' '}
+                        {fmtBytes(s.artifact.size)}
+                        {s.artifact.hash && (
+                          <span className="text-slate-500"> · {s.artifact.hash.slice(0, 20)}…</span>
+                        )}
+                      </a>
                     )}
                     {s.output && (
                       <pre className="mt-2 overflow-x-auto rounded-lg bg-black/30 p-2 text-[11px] text-slate-400">

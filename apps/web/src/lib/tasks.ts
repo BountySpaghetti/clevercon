@@ -71,6 +71,8 @@ export interface TaskStepView {
   // Advisory LLM-judge score (0-5) + one-line rationale; never gates payment.
   qualityRating?: number | null;
   qualityNote?: string | null;
+  // A file the provider delivered (downloadable + hash-verifiable).
+  artifact?: { url: string; hash: string | null; contentType: string; size: number } | null;
 }
 
 export interface Receipt {

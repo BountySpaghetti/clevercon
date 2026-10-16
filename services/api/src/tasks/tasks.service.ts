@@ -513,6 +513,8 @@ export class TasksService {
         // Advisory LLM-judge signal for the buyer (0-5 + rationale); never gates pay.
         qualityRating: s.qualityRating,
         qualityNote: s.qualityNote,
+        // A file the provider delivered: {url, hash, contentType, size} (downloadable + hash-verifiable).
+        artifact: s.artifact,
         // When held, the moment it auto-releases if left undisputed (the countdown).
         releaseAt: s.releaseAt,
         // The provider's returned result for this step, so the buyer sees what

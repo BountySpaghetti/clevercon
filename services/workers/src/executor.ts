@@ -249,6 +249,9 @@ export async function executeTask(
           ? envelope.data
           : JSON.stringify(envelope.data ?? envelope.artifact ?? '')
       ).slice(0, 2000);
+      // A provider may return a file as an ArtifactRef {url, hash, contentType,
+      // size}; persist it so the buyer can download + verify it (content-hash).
+      const artifact = (envelope.artifact ?? null) as object | null;
       // T2 (Attestable) steps that pass acceptance are held for a dispute window
       // instead of releasing immediately: the buyer can approve early or dispute
       // (the lock is the escrow). T1 is trustless (already verified) and releases
@@ -263,6 +266,7 @@ export async function executeTask(
             latencyMs,
             error: null,
             releaseAt: new Date(Date.now() + windowSec * 1000),
+            ...(artifact ? { artifact } : {}),
           },
         });
         if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
@@ -295,7 +299,13 @@ export async function executeTask(
       } else {
         await prisma.taskStep.update({
           where: { id: step.id },
-          data: { status: StepStatus.RELEASED, output: storedOutput, latencyMs, error: null },
+          data: {
+            status: StepStatus.RELEASED,
+            output: storedOutput,
+            latencyMs,
+            error: null,
+            ...(artifact ? { artifact } : {}),
+          },
         });
         if (step.serviceId) await recordOutcome(prisma, step.serviceId, true, latencyMs);
         // If the task is locked on-chain under a policy, settle this step (pay the
