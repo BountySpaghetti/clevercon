@@ -1,0 +1,36 @@
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { z } from 'zod';
+import { ServicesService } from './services.service.js';
+import { parseBody } from '../auth/validate.js';
+
+const listQuery = z.object({
+  q: z.string().optional(),
+  category: z.string().optional(),
+  capability: z.string().optional(),
+  tier: z.enum(['T1', 'T2', 'T3']).optional(),
+  sort: z.enum(['trust', 'recent', 'rating', 'price_asc', 'price_desc']).optional(),
+  limit: z.coerce.number().int().positive().optional(),
+  offset: z.coerce.number().int().nonnegative().optional(),
+});
+
+/** Public marketplace read API. */
+@Controller('services')
+export class ServicesController {
+  constructor(private readonly services: ServicesService) {}
+
+  @Get()
+  list(@Query() query: unknown) {
+    return this.services.list(parseBody(listQuery, query));
+  }
+
+  /** Public protocol fee (bps) so the dapp can disclose the take rate. */
+  @Get('fee')
+  fee() {
+    return this.services.platformFeeBps();
+  }
+
+  @Get(':id')
+  get(@Param('id') id: string) {
+    return this.services.get(id);
+  }
+}

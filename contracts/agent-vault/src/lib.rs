@@ -1,4 +1,11 @@
 #![no_std]
+// `release_payment_proved` keeps `release_payment`'s flat parameter style
+// (issue #122's proposed public surface) and adds `payee`, `nullifier`, and
+// `proof` to the existing five parameters. That exceeds Clippy's default
+// arg-count threshold in the wrapper/spec code the `#[contractimpl]` macro
+// generates, where a function- or impl-scoped `#[allow]` does not reach. This
+// is the only signature in the crate over the threshold.
+#![allow(clippy::too_many_arguments)]
 //! AgentVault — Soroban smart contract (v2)
 //!
 //! Trustless treasury for AgentForge. Holds multiple whitelisted assets (USDC, XLM, etc.)
@@ -18,9 +25,52 @@
 //!    per-asset `AssetSupported` flags so `get_supported_assets` and `is_supported_asset` never disagree.
 
 use soroban_sdk::contracterror;
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, log, token, Address, Env, String, Vec,
+    contract, contractclient, contractevent, contractimpl, contracttype, log, token, vec, Address,
+    Bytes, BytesN, Env, String, Vec,
 };
+
+/// Interface of the external, privacy-preserving policy verifier contract
+/// (tracked as issue #64). [`AgentVault::release_payment_proved`] calls
+/// [`PolicyVerifier::verify_policy`] with the task's committed policy hash plus
+/// the release's public parameters. A `true` return is the **only** signal that
+/// authorizes the release; any other outcome — a `false`, a contract error, or
+/// a trap — is treated as a rejection and moves no funds.
+///
+/// Public-input ordering is fixed here as `(commitment, payee, amount,
+/// nullifier)` in the absence of issue #66's authoritative specification. The
+/// real verifier and that document must agree with this order, or this call
+/// site changes.
+#[contractclient(name = "PolicyVerifierClient")]
+pub trait PolicyVerifier {
+    fn verify_policy(
+        env: Env,
+        commitment: BytesN<32>,
+        payee: Address,
+        amount: i128,
+        nullifier: BytesN<32>,
+        proof: Bytes,
+    ) -> bool;
+
+    /// pp/2 trustless Groth16/BLS12-381 verification against the verifier's
+    /// stored VK. The vault assembles `public_inputs` in the circuit's exact
+    /// order and only moves funds on `true`. Mirrors
+    /// `PolicyVerifier::verify_groth16_stored`.
+    fn verify_groth16_stored(env: Env, proof: Groth16Proof, public_inputs: Vec<BytesN<32>>)
+        -> bool;
+}
+
+/// A Groth16 proof over BLS12-381 (uncompressed points), structurally identical
+/// to the policy-verifier's `Groth16Proof` so the cross-contract call encodes to
+/// the same ScVal: A in G1 (96 bytes), B in G2 (192), C in G1 (96).
+#[contracttype]
+#[derive(Clone)]
+pub struct Groth16Proof {
+    pub a: BytesN<96>,
+    pub b: BytesN<192>,
+    pub c: BytesN<96>,
+}
 
 // Events
 
@@ -156,6 +206,44 @@ pub struct FeeClaimedEvent {
     pub amount: i128,
 }
 
+/// Emitted whenever the admin sets or changes the policy-verifier contract.
+/// `old` is `None` on the first set. Present so any swap of the verifier —
+/// which the admin can do at any time — is publicly observable on-chain.
+#[contractevent]
+pub struct PolicyVerifierSetEvent {
+    #[topic]
+    pub admin: Address,
+    pub old: Option<Address>,
+    pub new: Address,
+}
+
+/// Emitted by `create_task_with_policy` after the task is created and its
+/// private spending-policy commitment recorded. The commitment is an opaque
+/// hash; it reveals nothing about the policy itself.
+#[contractevent]
+pub struct PolicyCommittedEvent {
+    #[topic]
+    pub task_id: u64,
+    pub commitment: BytesN<32>,
+}
+
+/// Emitted by `release_payment_proved` on a successful proof-gated release.
+/// Mirrors [`ReleaseEvent`] plus the spent `nullifier`, so indexers can track
+/// replay protection. The zero-knowledge proof bytes are deliberately **never**
+/// included here or written to any log.
+#[contractevent]
+pub struct ReleaseProvedEvent {
+    #[topic]
+    pub user: Address,
+    #[topic]
+    pub orchestrator: Address,
+    #[topic]
+    pub task_id: u64,
+    pub asset: Address,
+    pub amount: i128,
+    pub nullifier: BytesN<32>,
+}
+
 #[contracterror]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VaultError {
@@ -186,6 +274,33 @@ pub enum VaultError {
     TooManyStepReleases = 25,
     FeeBpsExceedsCap = 26,
     NoFeesAccrued = 27,
+    /// `create_task_with_policy` was given an all-zero commitment, which no
+    /// real proof could ever satisfy.
+    InvalidCommitment = 28,
+    /// `release_payment_proved` was called but no policy verifier is
+    /// configured. Fail closed — no verifier call is attempted, no funds move.
+    PolicyVerifierNotSet = 29,
+    /// Plain `release_payment` was called on a task that carries a policy
+    /// commitment. Such tasks can only be released via `release_payment_proved`.
+    PolicyProofRequired = 30,
+    /// `release_payment_proved` was called on a task with no policy commitment.
+    /// Such tasks can only be released via plain `release_payment`.
+    NoPolicyCommitment = 31,
+    /// The policy verifier did not return an explicit `true` for the supplied
+    /// proof and public inputs. Funds do not move and the nullifier is NOT
+    /// marked spent.
+    PolicyProofRejected = 32,
+    /// This nullifier has already been consumed for this task. Rejected as a
+    /// replay before the verifier is contacted.
+    NullifierAlreadyUsed = 33,
+    /// A batched proof-gated release had an empty, oversized, or mismatched
+    /// set of payees/amounts/nullifiers.
+    BatchSizeInvalid = 34,
+    /// Two releases in the same batch carried the same nullifier.
+    BatchDuplicateNullifier = 35,
+    /// The current ledger time is outside the proof's validity window
+    /// `[valid_after, valid_before]` (the R6 calendar check).
+    OutsideValidityWindow = 36,
 }
 
 // Storage keys
@@ -229,6 +344,23 @@ pub enum DataKey {
     FeeConfig,
     /// Per-asset accrued (but unclaimed) protocol fees: asset → i128.
     AccruedFees(Address),
+    /// The external policy-verifier contract address. Admin-set, mutable at any
+    /// time (mirrors [`DataKey::DisputeResolver`]). Absent means the proof-gated
+    /// release path is disabled and fails closed.
+    PolicyVerifier,
+    /// Per-task consumed-nullifier marker: `(task_id, nullifier) → ()`. Presence
+    /// means this nullifier has already produced a proof-gated release for this
+    /// task and may not be reused. Scoped per task (not global) so the entries
+    /// share the task's TTL lifecycle and are pruned on finalization; the
+    /// per-task commitment already prevents cross-task proof reuse.
+    TaskNullifier(u64, BytesN<32>),
+    /// Enumerable index of a task's consumed nullifiers, for unit TTL refresh
+    /// and cleanup on finalization. Mirrors [`DataKey::TaskStepIds`].
+    TaskNullifierIds(u64),
+    /// Per-task count of proof-gated releases so far, the authenticated
+    /// `prior_count` the pp/2 batch circuit's velocity rule (R7) is proven
+    /// against. `task.spent` serves the same role as `running_spend` for R2.
+    TaskReleaseCount(u64),
 }
 
 // Data structs
@@ -305,6 +437,14 @@ pub struct TaskInfo {
     /// resolution by the configured `dispute_resolver`. A resolved dispute
     /// leaves this flag set as an audit record; the task is then `completed`.
     pub disputed: bool,
+    /// Private spending-policy commitment, set only by
+    /// [`AgentVault::create_task_with_policy`]. `Some` routes every release for
+    /// this task through the proof-gated [`AgentVault::release_payment_proved`]
+    /// path; `None` (the plain [`AgentVault::create_task`] path) routes it
+    /// through [`AgentVault::release_payment`]. This single field on the single
+    /// task record is the sole discriminator between the two paths — one value,
+    /// one TTL lifecycle, so the two paths can never both (or neither) apply.
+    pub policy_commitment: Option<BytesN<32>>,
     /// Ledger timestamp when this task was created.
     pub created_at: u64,
 }
@@ -364,6 +504,11 @@ const MAX_USER_TASK_INFOS_PAGE_SIZE: u32 = 50;
 /// prevents a hostile orchestrator from creating unbounded persistent keys.
 const MAX_RELEASE_STEPS_PER_TASK: u32 = 256;
 
+/// Batch size of the pp/2 spend-policy circuit (`policy_batch.circom`, N=4). The
+/// vault reconstructs exactly this many slots; the active releases come first and
+/// the remainder are zero-padded null slots, matching the circuit.
+const BATCH_N: u32 = 4;
+
 const PERSISTENT_TTL_THRESHOLD: u32 = 17_280; // ~1 day
 const PERSISTENT_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
@@ -377,7 +522,7 @@ const INSTANCE_TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 /// deployment before assuming a given function or storage layout
 /// exists, especially important on Soroban where the same address
 /// can be upgraded in place.
-const CONTRACT_VERSION: u32 = 5;
+const CONTRACT_VERSION: u32 = 6;
 
 // Contract
 
@@ -511,6 +656,13 @@ impl AgentVault {
     // Deposits & Withdrawals
 
     /// Deposit supported tokens from user's external wallet into their vault balance.
+    ///
+    /// CEI note: this is a pull (`user` is the token's `from`), so the token
+    /// contract runs as part of a transfer the CALLER authorized against
+    /// themselves, not against the vault's funds — a re-entrant call made
+    /// from inside this transfer sees `asset_account.balance` still at its
+    /// PRE-deposit value, which cannot be leveraged for a double-credit.
+    /// Audited for CEI; no reordering was needed.
     pub fn deposit(
         env: Env,
         user: Address,
@@ -565,6 +717,9 @@ impl AgentVault {
     /// Only the unlocked portion (`balance - locked`) of the given asset may be
     /// withdrawn; funds locked by active tasks for that asset stay reserved, so a
     /// withdrawal succeeds even while other funds — or other assets — are locked.
+    ///
+    /// CEI ordering: `asset_account.balance` is debited before the external
+    /// transfer. See the comment at the transfer call site — do not reorder.
     pub fn withdraw(
         env: Env,
         user: Address,
@@ -608,12 +763,19 @@ impl AgentVault {
         }
 
         Self::extend_instance_ttl(&env);
-        let token_client = token::Client::new(&env, &asset);
-        token_client.transfer(&env.current_contract_address(), &user, &amount);
 
+        // CEI ordering: all state writes for this withdrawal are committed
+        // BEFORE the external token transfer below. A token whose `transfer`
+        // re-enters this contract (e.g. via a transfer hook) will observe the
+        // already-debited balance, so a second `withdraw` in the same call
+        // stack cannot double-spend the same funds. Do not move the transfer
+        // above this block.
         asset_account.balance -= amount;
         env.storage().persistent().set(&asset_key, &asset_account);
         Self::extend_persistent_ttl(&env, &asset_key);
+
+        let token_client = token::Client::new(&env, &asset);
+        token_client.transfer(&env.current_contract_address(), &user, &amount);
 
         WithdrawEvent {
             user: user.clone(),
@@ -812,6 +974,10 @@ impl AgentVault {
             spent: 0,
             completed: false,
             disputed: false,
+            // The plain task-creation path never records a commitment. The
+            // proof-gated path is reached only via `create_task_with_policy`,
+            // which delegates here and then sets this field.
+            policy_commitment: None,
             created_at: env.ledger().timestamp(),
         };
         let task_key = DataKey::Task(counter);
@@ -852,8 +1018,64 @@ impl AgentVault {
         Ok(counter)
     }
 
+    /// Create a task exactly like [`Self::create_task`], but bind a **private
+    /// spending-policy commitment** to it. Every release for the resulting task
+    /// must go through [`Self::release_payment_proved`] with a proof the
+    /// configured verifier accepts; the plain [`Self::release_payment`] path
+    /// rejects it with [`VaultError::PolicyProofRequired`].
+    ///
+    /// `commitment` is an opaque 32-byte hash of the user's off-chain policy —
+    /// it reveals nothing on its own. An all-zero commitment is rejected: no
+    /// real proof could satisfy it, so it would only create a permanently
+    /// unreleasable, budget-locked task.
+    ///
+    /// This delegates the whole creation path to [`Self::create_task`] (auth,
+    /// pause check, validation, budget lock, counter, indexing, `TaskNewEvent`)
+    /// so that function stays the single source of truth and is provably
+    /// unmodified — a task created through it can never carry a commitment.
+    pub fn create_task_with_policy(
+        env: Env,
+        orchestrator: Address,
+        asset: Address,
+        plan_cost: i128,
+        commitment: BytesN<32>,
+    ) -> Result<u64, VaultError> {
+        if commitment == BytesN::from_array(&env, &[0u8; 32]) {
+            return Err(VaultError::InvalidCommitment);
+        }
+
+        let task_id = Self::create_task(env.clone(), orchestrator, asset, plan_cost)?;
+
+        let task_key = DataKey::Task(task_id);
+        let mut task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .expect("task just created");
+        task.policy_commitment = Some(commitment.clone());
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        PolicyCommittedEvent {
+            task_id,
+            commitment,
+        }
+        .publish(&env);
+        log!(
+            &env,
+            "create_task_with_policy id={} commitment bound",
+            task_id
+        );
+
+        Ok(task_id)
+    }
+
     /// Release funds for one step: contract transfers `amount` tokens to the ORCHESTRATOR.
     /// Returns true on success.
+    ///
+    /// CEI ordering: the step is recorded and `task.spent` is bumped before
+    /// the external transfer. See the comment at the transfer call site —
+    /// do not reorder.
     pub fn release_payment(
         env: Env,
         orchestrator: Address,
@@ -875,6 +1097,17 @@ impl AgentVault {
             .get(&task_key)
             .ok_or(VaultError::TaskNotFound)?;
         Self::extend_persistent_ttl(&env, &task_key);
+
+        // ── Mutual exclusion with the proof-gated path ───────────────────
+        // A task that carries a private spending-policy commitment can ONLY be
+        // released through `release_payment_proved` (with a verified proof).
+        // This is the negation of the check at the top of that function; the
+        // two conditions read the same single field on the same task record,
+        // so exactly one path applies to any non-finalized task and neither
+        // applies once it is finalized (the `completed` guard below fires).
+        if task.policy_commitment.is_some() {
+            return Err(VaultError::PolicyProofRequired);
+        }
 
         if task.completed {
             return Err(VaultError::TaskAlreadyCompleted);
@@ -906,7 +1139,6 @@ impl AgentVault {
         Self::record_step_release(&env, task_id, step_id, amount)?;
 
         Self::extend_instance_ttl(&env);
-        let token_client = token::Client::new(&env, &asset);
 
         // ── Protocol fee deduction ──────────────────────────────────────
         // Fee rounds DOWN (integer division), so the orchestrator always
@@ -918,11 +1150,17 @@ impl AgentVault {
         let fee = Self::compute_fee(&env, amount);
         let orchestrator_payout = amount.checked_sub(fee).expect("fee arithmetic underflow");
 
-        token_client.transfer(
-            &env.current_contract_address(),
-            &orchestrator,
-            &orchestrator_payout,
-        );
+        // CEI ordering: task.spent and the fee accrual are both written
+        // BEFORE the external token transfers below. record_step_release
+        // above already makes this exact (task_id, step_id) idempotent
+        // against re-entry; bumping task.spent here additionally protects
+        // the task's overall plan_cost cap against a DIFFERENT step_id (or
+        // a different fund-moving function, e.g. withdraw) being invoked
+        // re-entrantly from inside the transfer below. Do not move the
+        // transfers above this block.
+        task.spent += amount;
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
 
         // Accrue the fee (if any) to the configured recipient's claimable balance.
         if fee > 0 {
@@ -948,9 +1186,12 @@ impl AgentVault {
             }
         }
 
-        task.spent += amount;
-        env.storage().persistent().set(&task_key, &task);
-        Self::extend_persistent_ttl(&env, &task_key);
+        let token_client = token::Client::new(&env, &asset);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &orchestrator,
+            &orchestrator_payout,
+        );
 
         ReleaseEvent {
             user: task.user.clone(),
@@ -972,6 +1213,494 @@ impl AgentVault {
         );
 
         Ok(true)
+    }
+
+    /// Release funds for one step of a task that carries a **private
+    /// spending-policy commitment**, gated on a zero-knowledge proof that the
+    /// configured verifier accepts. This is the mirror of
+    /// [`Self::release_payment`] for the committed-task path: a task created by
+    /// [`Self::create_task_with_policy`] can only be paid out here, and a plain
+    /// task can only be paid out via [`Self::release_payment`] — mutual
+    /// exclusion is enforced at the top of both.
+    ///
+    /// Ordering is deliberate and load-bearing:
+    /// 1. cheap local guards first — auth, pause, amount, task lookup, mutual
+    ///    exclusion, lifecycle (`completed`/`disputed`), orchestrator/asset
+    ///    match, step idempotency;
+    /// 2. **budget check before the verifier is ever contacted** — an
+    ///    over-budget request must never pay for a proof verification;
+    /// 3. **nullifier-already-spent check** — a replayed nullifier is rejected
+    ///    before the verifier call;
+    /// 4. **verifier configured?** — if not, fail closed
+    ///    ([`VaultError::PolicyVerifierNotSet`]): no call is attempted and no
+    ///    funds move;
+    /// 5. cross-contract `verify_policy(commitment, payee, amount, nullifier,
+    ///    proof)` — only an explicit `true` authorizes the release; a `false`
+    ///    returns [`VaultError::PolicyProofRejected`] and a verifier that
+    ///    errors or traps reverts the whole call. Either way it fails closed,
+    ///    and the nullifier is **not** marked spent on a failed verification,
+    ///    so a rejected attempt cannot burn a nullifier a later legitimate
+    ///    proof needs;
+    /// 6. CEI — the nullifier marker, the step record, `task.spent` and the fee
+    ///    accrual are all committed **before** the token transfer, exactly as
+    ///    in [`Self::release_payment`].
+    ///
+    /// `payee` is a public input of the proof: the verifier rejects a proof
+    /// generated for a different `(payee, amount)`. Funds are transferred to
+    /// `payee` (fee deducted), which need not be the orchestrator — expressing
+    /// "which payees the policy allows" is a core purpose of the mechanism. The
+    /// caller must still be the task's registered orchestrator.
+    ///
+    /// The proof bytes are never logged or emitted in an event.
+    ///
+    /// (Wide signature: see the crate-level `too_many_arguments` allow.)
+    pub fn release_payment_proved(
+        env: Env,
+        orchestrator: Address,
+        task_id: u64,
+        step_id: u64,
+        asset: Address,
+        amount: i128,
+        payee: Address,
+        nullifier: BytesN<32>,
+        proof: Bytes,
+    ) -> Result<bool, VaultError> {
+        orchestrator.require_auth();
+        Self::require_not_paused(&env)?;
+        if amount <= 0 {
+            return Err(VaultError::InvalidAmount);
+        }
+
+        let task_key = DataKey::Task(task_id);
+        let mut task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        // ── Mutual exclusion with the plain path ────────────────────────
+        // This entry point serves ONLY tasks that carry a policy commitment.
+        // A plain task (no commitment) must go through `release_payment`. This
+        // is the exact negation of the check in that function.
+        let commitment = task
+            .policy_commitment
+            .clone()
+            .ok_or(VaultError::NoPolicyCommitment)?;
+
+        if task.completed {
+            return Err(VaultError::TaskAlreadyCompleted);
+        }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+        if task.orchestrator != orchestrator {
+            return Err(VaultError::NotYourOrchestrator);
+        }
+        if task.asset != asset {
+            return Err(VaultError::AssetMismatch);
+        }
+
+        // Step idempotency — identical semantics to `release_payment`. A
+        // genuine replay of an already-succeeded step is an idempotent success
+        // and does NOT re-run verification or re-check the nullifier.
+        let step_key = DataKey::TaskStepRelease(task_id, step_id);
+        if let Some(record) = env.storage().persistent().get::<_, StepRelease>(&step_key) {
+            Self::extend_persistent_ttl(&env, &step_key);
+            Self::extend_task_step_ids_ttl(&env, task_id);
+            Self::extend_task_nullifier_ids_ttl(&env, task_id);
+            if record.amount == amount {
+                return Ok(true);
+            }
+            return Err(VaultError::ReleaseConflict);
+        }
+
+        // (2) Budget check FIRST — cheaper than a cross-contract call, and an
+        // over-budget request must never trigger proof verification.
+        if task.spent + amount > task.plan_cost {
+            return Err(VaultError::ExceedsPlanCost);
+        }
+
+        // (3) Replay check — a nullifier already consumed for this task is
+        // rejected before the verifier is contacted.
+        let nullifier_key = DataKey::TaskNullifier(task_id, nullifier.clone());
+        if env.storage().persistent().has(&nullifier_key) {
+            Self::extend_persistent_ttl(&env, &nullifier_key);
+            return Err(VaultError::NullifierAlreadyUsed);
+        }
+
+        // (4) Verifier must be configured — fail closed, no call, no funds.
+        let verifier: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PolicyVerifier)
+            .ok_or(VaultError::PolicyVerifierNotSet)?;
+        Self::extend_instance_ttl(&env);
+
+        // (5) Cross-contract verification against the [`PolicyVerifier`]
+        // interface, public inputs in the fixed order
+        // `(commitment, payee, amount, nullifier)` with `proof` last. ONLY an
+        // explicit `true` authorizes the release; a `false` returns here as
+        // `PolicyProofRejected` before a single state write, so the nullifier
+        // is NOT burned by a failed verification. A verifier that errors or
+        // traps reverts the whole call — also fail closed: no funds move and
+        // no state is written.
+        let verified = PolicyVerifierClient::new(&env, &verifier).verify_policy(
+            &commitment,
+            &payee,
+            &amount,
+            &nullifier,
+            &proof,
+        );
+        if !verified {
+            return Err(VaultError::PolicyProofRejected);
+        }
+
+        // ── EFFECTS (checks-effects-interactions) ───────────────────────
+        // Everything that bounds fund movement is committed BEFORE the
+        // transfer: the step record, the consumed-nullifier marker,
+        // `task.spent`, and the fee accrual. A token whose `transfer`
+        // re-enters this contract sees the consumed nullifier (this exact
+        // proved release is now idempotent) and the bumped `task.spent`
+        // (the plan_cost cap holds against any other step or fund-mover
+        // invoked re-entrantly). Do not move the transfer above this block.
+        Self::record_step_release(&env, task_id, step_id, amount)?;
+        Self::record_task_nullifier(&env, task_id, &nullifier)?;
+        Self::extend_instance_ttl(&env);
+
+        let fee = Self::compute_fee(&env, amount);
+        let payee_payout = amount.checked_sub(fee).expect("fee arithmetic underflow");
+
+        task.spent += amount;
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        // Accrue the fee (if any) to the configured recipient's claimable
+        // balance — identical handling to `release_payment`.
+        if fee > 0 {
+            if let Some(fee_config) = env
+                .storage()
+                .instance()
+                .get::<_, FeeConfig>(&DataKey::FeeConfig)
+            {
+                if let Some(ref recipient) = fee_config.recipient {
+                    let fee_key = DataKey::AccruedFees(asset.clone());
+                    let current: i128 = env.storage().instance().get(&fee_key).unwrap_or(0i128);
+                    let new_accrued = current.checked_add(fee).expect("fee accrual overflow");
+                    env.storage().instance().set(&fee_key, &new_accrued);
+
+                    FeeAccruedEvent {
+                        asset: asset.clone(),
+                        recipient: recipient.clone(),
+                        fee_amount: fee,
+                        task_id,
+                    }
+                    .publish(&env);
+                }
+            }
+        }
+
+        let token_client = token::Client::new(&env, &asset);
+        token_client.transfer(&env.current_contract_address(), &payee, &payee_payout);
+
+        ReleaseProvedEvent {
+            user: task.user.clone(),
+            orchestrator: orchestrator.clone(),
+            task_id,
+            asset: asset.clone(),
+            amount,
+            nullifier: nullifier.clone(),
+        }
+        .publish(&env);
+        log!(
+            &env,
+            "release_payment_proved task={} asset={} amount={} fee={} payee_payout={} total_spent={}",
+            task_id,
+            asset,
+            amount,
+            fee,
+            payee_payout,
+            task.spent
+        );
+
+        Ok(true)
+    }
+
+    /// Proof-gated BATCH release (pp/2). One Groth16 proof authorizes up to
+    /// `BATCH_N` transfers under the task's private policy, verified on-chain by a
+    /// real BLS12-381 pairing. The public inputs are reconstructed here in the
+    /// circuit's exact order and checked against the verifier's stored VK; funds
+    /// move only on a `true`. Mirrors [`Self::release_payment_proved`]'s guards
+    /// and checks-effects-interactions ordering, extended to N releases plus the
+    /// R2 (running spend) and R7 (release count) accumulators.
+    ///
+    /// `payees`, `amounts`, and `nullifiers` are the ACTIVE releases (length
+    /// `1..=BATCH_N`), in the order the prover placed them; the circuit's trailing
+    /// null slots are reconstructed here as zero field elements. `valid_after` /
+    /// `valid_before` are the proof's R6 validity window: the ledger time must lie
+    /// within it (checked here) and the proof shows that window is inside the
+    /// private calendar. `step_id` makes the whole batch idempotent.
+    pub fn release_payment_proved_batch(
+        env: Env,
+        orchestrator: Address,
+        task_id: u64,
+        step_id: u64,
+        asset: Address,
+        payees: Vec<Address>,
+        amounts: Vec<i128>,
+        nullifiers: Vec<BytesN<32>>,
+        valid_after: u64,
+        valid_before: u64,
+        proof: Groth16Proof,
+    ) -> Result<bool, VaultError> {
+        orchestrator.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let m = payees.len();
+        if m == 0 || m > BATCH_N || amounts.len() != m || nullifiers.len() != m {
+            return Err(VaultError::BatchSizeInvalid);
+        }
+
+        // R6 liveness: the ledger time must be inside the proof's validity window.
+        // The proof separately proves that window is within the private calendar.
+        let ledger_time = env.ledger().timestamp();
+        if ledger_time < valid_after || ledger_time > valid_before {
+            return Err(VaultError::OutsideValidityWindow);
+        }
+
+        let task_key = DataKey::Task(task_id);
+        let mut task: TaskInfo = env
+            .storage()
+            .persistent()
+            .get(&task_key)
+            .ok_or(VaultError::TaskNotFound)?;
+        Self::extend_persistent_ttl(&env, &task_key);
+
+        let commitment = task
+            .policy_commitment
+            .clone()
+            .ok_or(VaultError::NoPolicyCommitment)?;
+
+        if task.completed {
+            return Err(VaultError::TaskAlreadyCompleted);
+        }
+        if task.disputed {
+            return Err(VaultError::TaskDisputed);
+        }
+        if task.orchestrator != orchestrator {
+            return Err(VaultError::NotYourOrchestrator);
+        }
+        if task.asset != asset {
+            return Err(VaultError::AssetMismatch);
+        }
+
+        // Each active amount must be positive; accumulate the batch total.
+        let mut batch_total: i128 = 0;
+        for a in amounts.iter() {
+            if a <= 0 {
+                return Err(VaultError::InvalidAmount);
+            }
+            batch_total = batch_total
+                .checked_add(a)
+                .ok_or(VaultError::InvalidAmount)?;
+        }
+
+        // Step idempotency — a genuine replay of a succeeded batch step is an
+        // idempotent success and re-runs neither verification nor transfers.
+        let step_key = DataKey::TaskStepRelease(task_id, step_id);
+        if let Some(record) = env.storage().persistent().get::<_, StepRelease>(&step_key) {
+            Self::extend_persistent_ttl(&env, &step_key);
+            Self::extend_task_step_ids_ttl(&env, task_id);
+            Self::extend_task_nullifier_ids_ttl(&env, task_id);
+            if record.amount == batch_total {
+                return Ok(true);
+            }
+            return Err(VaultError::ReleaseConflict);
+        }
+
+        // Budget check before any verifier call.
+        if task.spent + batch_total > task.plan_cost {
+            return Err(VaultError::ExceedsPlanCost);
+        }
+
+        // Replay check: reject a nullifier already consumed for this task, and a
+        // nullifier repeated within this batch.
+        for (i, n) in nullifiers.iter().enumerate() {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::TaskNullifier(task_id, n.clone()))
+            {
+                return Err(VaultError::NullifierAlreadyUsed);
+            }
+            for (j, n2) in nullifiers.iter().enumerate() {
+                if i != j && n == n2 {
+                    return Err(VaultError::BatchDuplicateNullifier);
+                }
+            }
+        }
+
+        // Verifier must be configured — fail closed.
+        let verifier: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PolicyVerifier)
+            .ok_or(VaultError::PolicyVerifierNotSet)?;
+        Self::extend_instance_ttl(&env);
+
+        // Authenticated accumulator state the circuit is proven against: the prior
+        // running spend (R2) and release count (R7).
+        let running_spend = task.spent as u128;
+        let prior_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TaskReleaseCount(task_id))
+            .unwrap_or(0u64);
+
+        // Reconstruct the public inputs in the circuit's EXACT order:
+        //   [commitment, nullifier[0..N], payee_field[0..N], amount[0..N],
+        //    valid_after, valid_before, running_spend, prior_count]
+        // with trailing null slots (m..N) as zero field elements.
+        let zero32: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
+        let mut pis: Vec<BytesN<32>> = vec![&env, commitment.clone()];
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                nullifiers.get_unchecked(i)
+            } else {
+                zero32.clone()
+            });
+        }
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                Self::address_to_field(&env, &payees.get_unchecked(i))
+            } else {
+                zero32.clone()
+            });
+        }
+        for i in 0..BATCH_N {
+            pis.push_back(if i < m {
+                Self::amount_to_field(&env, amounts.get_unchecked(i))
+            } else {
+                zero32.clone()
+            });
+        }
+        pis.push_back(Self::u64_to_field(&env, valid_after));
+        pis.push_back(Self::u64_to_field(&env, valid_before));
+        pis.push_back(Self::u128_to_field(&env, running_spend));
+        pis.push_back(Self::u64_to_field(&env, prior_count));
+
+        let verified =
+            PolicyVerifierClient::new(&env, &verifier).verify_groth16_stored(&proof, &pis);
+        if !verified {
+            return Err(VaultError::PolicyProofRejected);
+        }
+
+        // ── EFFECTS (checks-effects-interactions) ───────────────────────
+        // All state that bounds fund movement is committed before any transfer.
+        Self::record_step_release(&env, task_id, step_id, batch_total)?;
+        for n in nullifiers.iter() {
+            Self::record_task_nullifier(&env, task_id, &n)?;
+        }
+        task.spent += batch_total;
+        env.storage().persistent().set(&task_key, &task);
+        Self::extend_persistent_ttl(&env, &task_key);
+        let count_key = DataKey::TaskReleaseCount(task_id);
+        env.storage()
+            .persistent()
+            .set(&count_key, &(prior_count + m as u64));
+        Self::extend_persistent_ttl(&env, &count_key);
+
+        // ── INTERACTIONS: pay each active payee (amount minus protocol fee) ──
+        let token_client = token::Client::new(&env, &asset);
+        for i in 0..m {
+            let amount = amounts.get_unchecked(i);
+            let payee = payees.get_unchecked(i);
+            let fee = Self::compute_fee(&env, amount);
+            let payee_payout = amount.checked_sub(fee).expect("fee arithmetic underflow");
+            Self::accrue_protocol_fee(&env, &asset, fee, task_id);
+            token_client.transfer(&env.current_contract_address(), &payee, &payee_payout);
+            ReleaseProvedEvent {
+                user: task.user.clone(),
+                orchestrator: orchestrator.clone(),
+                task_id,
+                asset: asset.clone(),
+                amount,
+                nullifier: nullifiers.get_unchecked(i),
+            }
+            .publish(&env);
+        }
+
+        log!(
+            &env,
+            "release_payment_proved_batch task={} count={} total={} spent={}",
+            task_id,
+            m,
+            batch_total,
+            task.spent
+        );
+        Ok(true)
+    }
+
+    /// Encode a Soroban `Address` as the pp/2 payee field element: SHA-256 of the
+    /// address's ScVal XDR with the top 3 bits cleared (so the value is < 2^253 <
+    /// r). Byte-for-byte identical to `@clevercon/common`'s `payeeField`, which is
+    /// what binds a proof to the real payee.
+    fn address_to_field(env: &Env, address: &Address) -> BytesN<32> {
+        let xdr: Bytes = address.to_xdr(env);
+        let hash: BytesN<32> = env.crypto().sha256(&xdr).into();
+        let mut arr = hash.to_array();
+        arr[0] &= 0x1f;
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a stroops amount as a 32-byte big-endian scalar (16 zero bytes then
+    /// the u128), matching the circuit's `amount` input.
+    fn amount_to_field(env: &Env, amount: i128) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[16..32].copy_from_slice(&(amount as u128).to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a u64 (ledger time / count) as a 32-byte big-endian scalar.
+    fn u64_to_field(env: &Env, v: u64) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[24..32].copy_from_slice(&v.to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Encode a u128 (running spend) as a 32-byte big-endian scalar.
+    fn u128_to_field(env: &Env, v: u128) -> BytesN<32> {
+        let mut arr = [0u8; 32];
+        arr[16..32].copy_from_slice(&v.to_be_bytes());
+        BytesN::from_array(env, &arr)
+    }
+
+    /// Accrue a protocol fee to the configured recipient's claimable balance for
+    /// `asset`. No-op when the fee is zero or no recipient is configured. Same
+    /// handling as the single proof-gated release.
+    fn accrue_protocol_fee(env: &Env, asset: &Address, fee: i128, task_id: u64) {
+        if fee <= 0 {
+            return;
+        }
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<_, FeeConfig>(&DataKey::FeeConfig)
+        {
+            if let Some(ref recipient) = fee_config.recipient {
+                let fee_key = DataKey::AccruedFees(asset.clone());
+                let current: i128 = env.storage().instance().get(&fee_key).unwrap_or(0i128);
+                let new_accrued = current.checked_add(fee).expect("fee accrual overflow");
+                env.storage().instance().set(&fee_key, &new_accrued);
+                FeeAccruedEvent {
+                    asset: asset.clone(),
+                    recipient: recipient.clone(),
+                    fee_amount: fee,
+                    task_id,
+                }
+                .publish(env);
+            }
+        }
     }
 
     /// Orchestrator marks task complete.
@@ -1295,6 +2024,66 @@ impl AgentVault {
         Ok(accrued)
     }
 
+    // ── Private Spending Policy ─────────────────────────────────────────
+
+    /// Admin sets (or replaces) the external policy-verifier contract used by
+    /// [`Self::release_payment_proved`]. Mutable at any time by the admin,
+    /// deliberately mirroring [`Self::set_dispute_resolver`]: a committed task
+    /// is verified against whichever verifier is configured when its release is
+    /// attempted.
+    ///
+    /// Trust note: a verifier that returned `true` unconditionally would defeat
+    /// every committed task's policy. This is the same trust the contract
+    /// already places in the admin elsewhere (asset whitelist, dispute
+    /// resolver, protocol fee). Every change here is published as
+    /// [`PolicyVerifierSetEvent`] so a swap is observable on-chain.
+    pub fn set_policy_verifier(
+        env: Env,
+        admin: Address,
+        verifier: Address,
+    ) -> Result<(), VaultError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("Not initialized");
+        if admin != stored_admin {
+            return Err(VaultError::Unauthorized);
+        }
+
+        let old: Option<Address> = env.storage().instance().get(&DataKey::PolicyVerifier);
+        env.storage()
+            .instance()
+            .set(&DataKey::PolicyVerifier, &verifier);
+        Self::extend_instance_ttl(&env);
+
+        PolicyVerifierSetEvent {
+            admin,
+            old,
+            new: verifier.clone(),
+        }
+        .publish(&env);
+        log!(&env, "Policy verifier set to: {}", verifier);
+        Ok(())
+    }
+
+    /// Returns the configured policy-verifier contract, or `None` if the
+    /// proof-gated release path has not been enabled.
+    pub fn get_policy_verifier(env: Env) -> Option<Address> {
+        let result = env.storage().instance().get(&DataKey::PolicyVerifier);
+        Self::extend_instance_ttl(&env);
+        result
+    }
+
+    /// Returns the private spending-policy commitment bound to `task_id` by
+    /// [`Self::create_task_with_policy`], or `None` for a plainly-created task
+    /// (or an unknown task). Presence of a commitment is exactly what routes a
+    /// task to the proof-gated release path.
+    pub fn get_task_policy(env: Env, task_id: u64) -> Option<BytesN<32>> {
+        Self::get_task(env, task_id).and_then(|task| task.policy_commitment)
+    }
+
     /// Computes the fee to deduct from `amount` based on the current fee
     /// config. Returns 0 when no fee is configured or the recipient is absent.
     ///
@@ -1397,20 +2186,6 @@ impl AgentVault {
             }
         }
 
-        if let Some((refund_to_user, payout_to_orchestrator)) = dispute_split {
-            let token_client = token::Client::new(env, &task.asset);
-            if refund_to_user > 0 {
-                token_client.transfer(&env.current_contract_address(), &task.user, &refund_to_user);
-            }
-            if payout_to_orchestrator > 0 {
-                token_client.transfer(
-                    &env.current_contract_address(),
-                    &task.orchestrator,
-                    &payout_to_orchestrator,
-                );
-            }
-        }
-
         let config_key = DataKey::UserConfig(task.user.clone());
         let mut config: UserConfig = env
             .storage()
@@ -1449,6 +2224,32 @@ impl AgentVault {
         env.storage().persistent().set(&task_key, &task);
         Self::extend_persistent_ttl(env, &task_key);
         Self::remove_task_step_releases(env, task_id);
+        // Prune the task's consumed-nullifier set: once the task is completed,
+        // both release paths are blocked by the `completed` guard, so these
+        // markers are dead weight — reclaim their rent. `policy_commitment`
+        // stays on the (now completed) task record as an audit trail, mirroring
+        // how `disputed` is kept; nothing refreshes it, so it lapses naturally.
+        Self::remove_task_nullifiers(env, task_id);
+
+        // CEI ordering: task.completed, asset_account, and config are all
+        // committed above BEFORE the dispute-split transfers below. A token
+        // whose `transfer` re-enters this contract (e.g. via a transfer
+        // hook) will see task.completed == true and be rejected by the
+        // guard at the top of this function, so it cannot trigger a second
+        // payout for the same task. Do not move these transfers earlier.
+        if let Some((refund_to_user, payout_to_orchestrator)) = dispute_split {
+            let token_client = token::Client::new(env, &task.asset);
+            if refund_to_user > 0 {
+                token_client.transfer(&env.current_contract_address(), &task.user, &refund_to_user);
+            }
+            if payout_to_orchestrator > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &task.orchestrator,
+                    &payout_to_orchestrator,
+                );
+            }
+        }
 
         if dispute_split.is_none() {
             let refund = task.plan_cost - task.spent;
@@ -1527,6 +2328,78 @@ impl AgentVault {
             let step_key = DataKey::TaskStepRelease(task_id, step_id);
             if env.storage().persistent().has(&step_key) {
                 env.storage().persistent().remove(&step_key);
+            }
+        }
+        if env.storage().persistent().has(&ids_key) {
+            env.storage().persistent().remove(&ids_key);
+        }
+    }
+
+    /// Marks `nullifier` as consumed for `task_id` and appends it to the
+    /// per-task nullifier index. Mirrors [`Self::record_step_release`]: the
+    /// index is bounded by `MAX_RELEASE_STEPS_PER_TASK` (a task can never
+    /// release more steps than that) so a hostile orchestrator cannot mint
+    /// unbounded persistent keys, and it is removed wholesale on finalization.
+    /// The caller has already verified the marker is absent; the dedup scan
+    /// here only guards the index against a double push.
+    fn record_task_nullifier(
+        env: &Env,
+        task_id: u64,
+        nullifier: &BytesN<32>,
+    ) -> Result<(), VaultError> {
+        let ids_key = DataKey::TaskNullifierIds(task_id);
+        let mut ids: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&ids_key)
+            .unwrap_or(Vec::new(env));
+
+        if !ids.iter().any(|id| &id == nullifier) {
+            if ids.len() >= MAX_RELEASE_STEPS_PER_TASK {
+                return Err(VaultError::TooManyStepReleases);
+            }
+            ids.push_back(nullifier.clone());
+            env.storage().persistent().set(&ids_key, &ids);
+            Self::extend_persistent_ttl(env, &ids_key);
+        }
+
+        let key = DataKey::TaskNullifier(task_id, nullifier.clone());
+        env.storage().persistent().set(&key, &());
+        Self::extend_persistent_ttl(env, &key);
+        Ok(())
+    }
+
+    /// Refreshes the TTL of a task's whole nullifier set as one unit — the
+    /// index and every marker it references — so no part expires alone and
+    /// re-opens a replay. Mirrors [`Self::extend_task_step_ids_ttl`].
+    fn extend_task_nullifier_ids_ttl(env: &Env, task_id: u64) {
+        let ids_key = DataKey::TaskNullifierIds(task_id);
+        let ids: Vec<BytesN<32>> = match env.storage().persistent().get(&ids_key) {
+            Some(ids) => ids,
+            None => return,
+        };
+        Self::extend_persistent_ttl(env, &ids_key);
+        for nullifier in ids.iter() {
+            let key = DataKey::TaskNullifier(task_id, nullifier);
+            if env.storage().persistent().has(&key) {
+                Self::extend_persistent_ttl(env, &key);
+            }
+        }
+    }
+
+    /// Removes a task's consumed-nullifier markers and their index. Called
+    /// from [`Self::finalize_task`]; mirrors [`Self::remove_task_step_releases`].
+    fn remove_task_nullifiers(env: &Env, task_id: u64) {
+        let ids_key = DataKey::TaskNullifierIds(task_id);
+        let ids: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&ids_key)
+            .unwrap_or(Vec::new(env));
+        for nullifier in ids.iter() {
+            let key = DataKey::TaskNullifier(task_id, nullifier);
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
             }
         }
         if env.storage().persistent().has(&ids_key) {
